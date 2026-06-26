@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.11
+// @version      1.12
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -211,6 +211,9 @@
     this.reportTypes = o.reportTypes || [];
     // Datum (TT.MM.JJJJ), ab dem Meldungen beruecksichtigt werden (leer = keine Grenze)
     this.searchFrom = o.searchFrom || '';
+    // Team-Rolle (key aus ROLE_PRESETS, z.B. 'cm'). Dient der Meldetypen-
+    // Vorauswahl und der Anzeige in der Liste.
+    this.role = o.role || '';
   }
 
   function Review(o) {
@@ -484,6 +487,7 @@
     #mentorRoot .pill.red { background:#c0392b !important; color:#fff !important; }
     #mentorRoot .pill.salmon { background:DarkSalmon !important; color:#fff !important; }
     #mentorRoot .pill.grey { background:#555 !important; color:#fff !important; }
+    #mentorRoot .pill.acc { background:rgb(175,142,232) !important; color:#1c1c1c !important; }
 
     #mentorRoot .row-flex { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
     #mentorRoot .grow { flex:1 1 auto; }
@@ -571,6 +575,14 @@
     return baseUri() + '/ac/ac_search.pl?' + params.map(([k, v]) => enc(k) + '=' + enc(v)).join('&');
   }
 
+  // Komfort-Suchlink fuer einen Schuetzling (wird bei der Anlage als
+  // meldesystemLink gespeichert und ist anklickbar). Zeigt im Meldesystem die
+  // geschlossenen Meldungen (state=2), an denen der Nick beteiligt ist
+  // (involvementtype=0). Aufbau exakt wie vom Meldesystem erwartet.
+  function buildProtegeSearchLink(nick) {
+    return buildSearchUrl(nick, 0).replace('&state=0', '&state=2');
+  }
+
   function gmGet(url) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -656,23 +668,62 @@
 
   // Prueft per Detailseite, ob die Meldung vom Schuetzling bewertet wurde.
   // Cache, damit dieselbe Meldung nicht mehrfach geladen wird.
-  const _raterCache = {};
-  async function reportRatedByProtege(reportId, protege) {
-    let rater = _raterCache[reportId];
-    if (rater === undefined) {
-      try {
-        const html = await gmGet(viewcaseUrl(reportId));
-        rater = extractRaterNick(html);
-      } catch (e) {
-        rater = '';
-      }
-      _raterCache[reportId] = rater;
+
+  // Liest aus dem HTML einer Meldungs-Detailseite alle Nicks, die die Meldung
+  // WEITERGELEITET haben. Aufbau der Aktionen: links der Akteur
+  // (<div style="width:170px..."><b>Nick</b></div>), rechts der Inhalt
+  // (<div style="width:430px...">...</div>). Enthaelt der Inhalt das Wort
+  // "WEITERGELEITET", hat dieser Akteur die Meldung weitergeleitet.
+  function extractForwarders(html) {
+    try {
+      const doc = $.parseHTML(html);
+      const out = [];
+      $(doc).find('div[style*="width:170px"]').each(function () {
+        const nick = $(this).find('b').first().text().trim();
+        if (!nick) return;
+        const content = $(this).next('div');
+        if (content.length && /WEITERGELEITET/i.test(content.text())) {
+          out.push(nick);
+        }
+      });
+      return out;
+    } catch (e) {
+      return [];
     }
-    if (!rater) return false;
-    return normalizeNick(rater) === normalizeNick(protege.nick);
   }
 
-  async function loadRandomReports(protege, count, onProgress) {
+  // Laedt die Detailseite EINMAL und merkt sich Bewerter + Weiterleiter.
+  const _reportInfoCache = {};
+  async function getReportInfo(reportId) {
+    let info = _reportInfoCache[reportId];
+    if (info === undefined) {
+      try {
+        const html = await gmGet(viewcaseUrl(reportId));
+        info = { rater: extractRaterNick(html), forwarders: extractForwarders(html) };
+      } catch (e) {
+        info = { rater: '', forwarders: [] };
+      }
+      _reportInfoCache[reportId] = info;
+    }
+    return info;
+  }
+
+  // Gehoert die Meldung zu diesem Schuetzling? Der "mode" steuert, was zaehlt:
+  //   'rated'     -> nur BEWERTET   ("Meldung bereits bewertet (von: NICK ...)")
+  //   'both'      -> bewertet ODER weitergeleitet
+  //   'forwarded' -> nur WEITERGELEITET ("WEITERGELEITET an: ...")
+  // Default ist 'rated' (bisheriges Verhalten).
+  async function reportMatchesProtege(reportId, protege, mode) {
+    const info = await getReportInfo(reportId);
+    const nick = normalizeNick(protege.nick);
+    const isRater = !!(info.rater && normalizeNick(info.rater) === nick);
+    const isForwarder = info.forwarders.some(f => normalizeNick(f) === nick);
+    if (mode === 'forwarded') return isForwarder;
+    if (mode === 'both') return isRater || isForwarder;
+    return isRater; // 'rated'
+  }
+
+  async function loadRandomReports(protege, count, onProgress, mode) {
     const reviewedIds = new Set(Store.reviewsFor(protege.id).map(r => r.reportId));
     const fromDate = effectiveFromDate(protege);
     const candidates = [];
@@ -715,7 +766,7 @@
       for (let i = 0; i < list.length && verified.length < count; i++) {
         const row = list[i];
         if (onProgress) onProgress('Pruefe Meldungen ... (' + verified.length + ' von ' + count + ' bestaetigt)');
-        if (await reportRatedByProtege(row.reportId, protege)) verified.push(row);
+        if (await reportMatchesProtege(row.reportId, protege, mode)) verified.push(row);
       }
     }
 
@@ -748,7 +799,7 @@
   // neueste zuerst). Bewusst OHNE Typ-/Datumsfilter: bei der manuellen Suche soll der
   // Nutzer ALLE abgeschlossenen Meldungen sehen (inkl. bereits kontrollierter) und frei
   // auswaehlen koennen. Die Filter gelten nur fuer die Zufalls-Stichprobe.
-  async function browseReports(protege, maxPages, onProgress) {
+  async function browseReports(protege, maxPages, onProgress, mode) {
     const prelim = [];
     const seen = new Set();
 
@@ -778,12 +829,12 @@
       } catch (e) { /* ueberspringen */ }
     }
 
-    // Verifikation: nur Meldungen behalten, die der Schuetzling laut Detailseite
-    // ("Meldung bereits bewertet (von: NICK ...)") tatsaechlich bewertet hat.
+    // Verifikation per Detailseite, je nach gewaehltem Modus (bewertet /
+    // weitergeleitet / beides).
     const out = [];
     for (let i = 0; i < prelim.length; i++) {
       if (onProgress) onProgress('Pruefe Meldungen ... (' + out.length + ' bestaetigt, ' + (i + 1) + '/' + prelim.length + ')');
-      if (await reportRatedByProtege(prelim[i].reportId, protege)) out.push(prelim[i]);
+      if (await reportMatchesProtege(prelim[i].reportId, protege, mode)) out.push(prelim[i]);
     }
     return out;
   }
@@ -978,10 +1029,13 @@
     html += '</table>';
 
     html += '<div class="typebox"><b>Berücksichtigte Meldetypen</b> <span class="muted">(RwV-Typen werden immer automatisch mit einbezogen)</span><br>';
-    html += '<div class="row-flex" style="margin:6px 0 8px"><span>Vorauswahl nach Rolle:</span>' +
+    html += '<div class="row-flex" style="margin:6px 0 8px"><span>Rolle:</span>' +
       '<select id="pgRolePreset"><option value="">– Rolle wählen –</option>';
-    ROLE_PRESETS.forEach(r => { html += '<option value="' + r.key + '">' + esc(r.label) + '</option>'; });
-    html += '</select><span class="muted">setzt genau die Typen der Rolle (überschreibt die Auswahl)</span></div>';
+    ROLE_PRESETS.forEach(r => {
+      const sel = (p.role === r.key) ? ' selected' : '';
+      html += '<option value="' + r.key + '"' + sel + '>' + esc(r.label) + '</option>';
+    });
+    html += '</select><span class="muted">setzt die Typen der Rolle (überschreibt die Auswahl) und wird gespeichert</span></div>';
     REPORT_CATEGORIES.forEach(c => {
       const checked = p.reportTypes.includes(c.key) ? 'checked' : '';
       html += '<label class="cb"><input type="checkbox" class="pgType" value="' + c.key + '" ' + checked + '> ' + esc(c.label) + '</label>';
@@ -998,10 +1052,10 @@
     html += '<textarea id="bulkNicks" placeholder="z. B.: MaxMuster, LisaMeier, TomSchmidt, AnnaKoch" style="min-height:70px"></textarea>';
     html += '<div class="row-flex" style="margin-top:8px"><div>Kontrolle ab Datum: <input type="text" id="bulkFrom" style="width:140px" placeholder="TT.MM.JJJJ"></div></div>';
     html += '<div class="typebox" style="margin-top:8px"><b>Meldetypen für alle</b> <span class="muted">(RwV immer automatisch)</span><br>';
-    html += '<div class="row-flex" style="margin:6px 0 8px"><span>Vorauswahl nach Rolle:</span>' +
+    html += '<div class="row-flex" style="margin:6px 0 8px"><span>Rolle für alle:</span>' +
       '<select id="bulkRolePreset"><option value="">– Rolle wählen –</option>';
     ROLE_PRESETS.forEach(r => { html += '<option value="' + r.key + '">' + esc(r.label) + '</option>'; });
-    html += '</select><span class="muted">setzt genau die Typen der Rolle (überschreibt die Auswahl)</span></div>';
+    html += '</select><span class="muted">setzt die Typen der Rolle und wird gespeichert</span></div>';
     REPORT_CATEGORIES.forEach(c => {
       html += '<label class="cb"><input type="checkbox" class="bulkType" value="' + c.key + '"> ' + esc(c.label) + '</label>';
     });
@@ -1046,6 +1100,10 @@
         html += '<div class="mwrap">';
         html += '<div class="row-flex"><div class="grow"><b style="font-size:15px">' + esc(pr.nick) + '</b>';
         if (pr.name) html += ' <span class="muted">(' + esc(pr.name) + ')</span>';
+        if (pr.role) {
+          const roleLabel = (ROLE_PRESETS.find(r => r.key === pr.role) || {}).label || pr.role;
+          html += '<span class="pill acc">' + esc(roleLabel) + '</span>';
+        }
         html += '<span class="pill grey">' + revs.length + ' gesichtet</span>';
         if (pending) html += '<span class="pill salmon">' + pending + ' Versand offen</span>';
         html += '</div>';
@@ -1091,7 +1149,7 @@
     $('#pgGenMs').on('click', function () {
       const nick = $('#pgNick').val().trim();
       if (!nick) { toast('Bitte zuerst einen Nickname eingeben.'); return; }
-      $('#pgMs').val(buildSearchUrl(nick, 0).replace('&involvementtype=0', '&involvementtype=3').replace('&state=0', '&state=2'));
+      $('#pgMs').val(buildProtegeSearchLink(nick));
     });
 
     $('#pgSave').on('click', function () {
@@ -1099,19 +1157,20 @@
       if (!nick) { toast('Nickname ist ein Pflichtfeld.'); return; }
       const types = $('.pgType:checked').map(function () { return $(this).val(); }).get();
       let ms = $('#pgMs').val().trim();
-      if (!ms) ms = buildSearchUrl(nick, 0).replace('&involvementtype=0', '&involvementtype=3').replace('&state=0', '&state=2');
+      if (!ms) ms = buildProtegeSearchLink(nick);
       const from = $('#pgFrom').val().trim();
       if (from && !parseDateInput(from)) { toast('Datum bitte als TT.MM.JJJJ angeben.'); return; }
+      const role = $('#pgRolePreset').val() || '';
 
       if (state.editProtege) {
         const pr = state.editProtege;
         pr.nick = nick; pr.name = $('#pgName').val().trim();
         pr.meldesystemLink = ms; pr.forumLink = $('#pgForum').val().trim();
-        pr.reportTypes = types; pr.searchFrom = from;
+        pr.reportTypes = types; pr.searchFrom = from; pr.role = role;
       } else {
         Store.proteges.push(new Protege({
           nick, name: $('#pgName').val().trim(), meldesystemLink: ms,
-          forumLink: $('#pgForum').val().trim(), reportTypes: types, searchFrom: from
+          forumLink: $('#pgForum').val().trim(), reportTypes: types, searchFrom: from, role
         }));
       }
       Store.save();
@@ -1138,6 +1197,7 @@
       const from = $('#bulkFrom').val().trim();
       if (from && !parseDateInput(from)) { toast('Datum bitte als TT.MM.JJJJ angeben.'); return; }
       const types = $('.bulkType:checked').map(function () { return $(this).val(); }).get();
+      const bulkRole = $('#bulkRolePreset').val() || '';
 
       let created = 0, updated = 0, untouched = 0;
       nicks.forEach(nick => {
@@ -1147,12 +1207,10 @@
           if (from) { existing.searchFrom = from; updated++; }
           else untouched++;
         } else {
-          const ms = buildSearchUrl(nick, 0)
-            .replace('&involvementtype=0', '&involvementtype=3')
-            .replace('&state=0', '&state=2');
+          const ms = buildProtegeSearchLink(nick);
           Store.proteges.push(new Protege({
             nick, name: '', meldesystemLink: ms, forumLink: '',
-            reportTypes: types.slice(), searchFrom: from
+            reportTypes: types.slice(), searchFrom: from, role: bulkRole
           }));
           created++;
         }
@@ -1345,6 +1403,16 @@
     html += '<a href="' + esc(buildSearchUrl(protege.nick, 0)) + '" target="_blank" class="mbtn ghost" style="text-decoration:none">↗ Suche öffnen</a>';
     html += '</div>';
 
+    const fmode = state.forwardMode || 'rated';
+    const fmodeOpt = (v, label) => '<option value="' + v + '"' + (fmode === v ? ' selected' : '') + '>' + label + '</option>';
+    html += '<div class="row-flex" style="margin-top:10px"><b>Berücksichtigen:</b>' +
+      '<select id="ctlMode">' +
+        fmodeOpt('rated', 'Ohne Weiterleitungen (nur selbst bewertet)') +
+        fmodeOpt('both', 'Mit Weiterleitungen (bewertet + weitergeleitet)') +
+        fmodeOpt('forwarded', 'Ausschließlich Weiterleitungen') +
+      '</select>' +
+      '<span class="muted">gilt für die Zufalls-Stichprobe und „Meldungen durchsuchen"</span></div>';
+
     html += '<div class="row-flex" style="margin-top:10px"><b>Zufällige Meldungen laden:</b>';
     html += '<button class="mbtn ghost ctlNone">Keine</button>';
     RANDOM_COUNTS.forEach(n => { html += '<button class="mbtn ctlRandom" data-n="' + n + '">' + n + '</button>'; });
@@ -1490,9 +1558,13 @@
       state.pending = []; state.message = null; render();
     });
 
+    $('#ctlMode').on('change', function () { state.forwardMode = $(this).val(); });
+
     $('.ctlRandom').on('click', async function () {
       const n = parseInt($(this).data('n'), 10);
       if (state.loading) return;
+      const mode = $('#ctlMode').val() || state.forwardMode || 'rated';
+      state.forwardMode = mode;
       state.loading = true; state.loadingText = 'Starte Suche ...'; state.message = null;
       // Aktuelle Sichtung ersetzen, damit "5" auch wirklich genau 5 ergibt
       state.pending = [];
@@ -1501,7 +1573,7 @@
         const result = await loadRandomReports(protege, n, txt => {
           state.loadingText = txt;
           $('#ctlLoading').text('⏳ ' + txt);
-        });
+        }, mode);
         state.pending = result.reports;
         state.loading = false;
         if (!result.reports.length) {
@@ -1530,12 +1602,14 @@
 
     $('#ctlBrowse').on('click', async function () {
       if (state.loading) return;
+      const mode = $('#ctlMode').val() || state.forwardMode || 'rated';
+      state.forwardMode = mode;
       state.loading = true; state.loadingText = 'Durchsuche Meldungen ...'; render();
       try {
         const rows = await browseReports(protege, MAX_PAGE_FETCH, txt => {
           state.loadingText = txt;
           $('#ctlLoading').text('⏳ ' + txt);
-        });
+        }, mode);
         state.browseResults = rows;
         state.loading = false;
         render();
