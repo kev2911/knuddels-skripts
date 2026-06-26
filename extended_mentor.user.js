@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.08
+// @version      1.09
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -508,6 +508,68 @@
     return (localStorage.getItem('reportStyle') || 'Dark') === 'Light' ? 'light' : 'dark';
   }
 
+  // Erkennt, ob der Extended Admincall auf dieser Seite aktiv ist.
+  // Der Admincall hinterlaesst sehr charakteristische Spuren im DOM:
+  //  - er versieht Buttons mit der Klasse .modern-button
+  //  - er fuegt ein Einstellungen-/Changelog-Menue (#settings, #changelog) hinzu
+  //  - er haengt seinen Namen an den Footer ("... Extended Admincall <version>")
+  function isAdmincallActive() {
+    if (document.querySelector('.modern-button')) return true;
+    if (document.getElementById('settings') && document.getElementById('changelog')) return true;
+    const ft = document.getElementById('footer');
+    if (ft && /Admincall/i.test(ft.textContent || '')) return true;
+    return false;
+  }
+
+  // Dunkler Grund-Style fuer die Knuddels-Seite, der NUR dann gesetzt wird, wenn
+  // der Admincall NICHT laeuft. So ist die Seite auch ohne Admincall gut lesbar
+  // (dunkler Hintergrund, heller Text). Laeuft der Admincall, halten wir uns
+  // komplett raus und entfernen einen evtl. gesetzten Style wieder -> dann sieht
+  // alles GENAU so aus wie mit Admincall.
+  function pageThemeCss() {
+    return `
+      html, body { background-color:#1c1c1c !important; color:#f2f2f2 !important; }
+      #main { background-color:#1c1c1c !important; }
+      #header { color:#fff !important; }
+      #footer { color:#f2f2f2 !important; }
+      a { color:rgb(175,142,232) !important; }
+      a:hover { color:#ff5555 !important; }
+      /* helle Inhaltskaesten abdunkeln */
+      .caseinfo2, .reportHint,
+      [style*="background:#eee"], [style*="background: #eee"],
+      [style*="background:#ddd"], [style*="background: #ddd"],
+      [style*="background:#f0f0f0"], [style*="background: #f0f0f0"] {
+        background:#242424 !important; background-color:#242424 !important;
+      }
+      .log, .content-type-section { background-color:#000 !important; }
+      .content-type-section h4 { background-color:#2b2b2b !important; color:#f2f2f2 !important; }
+      /* Tabellen lesbar */
+      th { background-color:rgba(175,142,232,.5) !important; color:#f2f2f2 !important; }
+      td { color:#f2f2f2; }
+      /* schwarzer Text, der auf dunklem Grund untergehen wuerde, aufhellen */
+      .colorReset,
+      [style*="color:#000000"], [style*="color: #000000"],
+      [style*="color:#000;"], [style*="color: #000;"] { color:#f2f2f2 !important; }
+      /* Eingabefelder lesbar */
+      input[type=text], input[type=password], input[type=number],
+      textarea, select { background-color:#000 !important; color:#fff !important; }
+    `;
+  }
+
+  function applyPageTheme() {
+    const existing = document.getElementById('mentorPageTheme');
+    if (isAdmincallActive()) {
+      // Admincall stylt die Seite selbst -> unseren Fallback wieder entfernen.
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) return; // schon gesetzt, nichts zu tun
+    const s = document.createElement('style');
+    s.id = 'mentorPageTheme';
+    s.textContent = pageThemeCss();
+    document.head.appendChild(s);
+  }
+
   /* =========================================================================
    *  TOAST
    * =======================================================================*/
@@ -958,7 +1020,7 @@
     html += '<div class="mwrap"><h4>📋 Mehrere Schützlinge auf einmal anlegen</h4>';
     html += '<div class="muted" style="margin-bottom:6px">Nicknames mit Komma getrennt eingeben. Für jeden wird ein Schützling angelegt (Meldesystem-Suche wird automatisch erzeugt). ' +
       'Datum und Meldetypen unten gelten für alle. Bereits vorhandene bleiben erhalten – bei ihnen wird höchstens das Datum aktualisiert.</div>';
-    html += '<textarea id="bulkNicks" placeholder="z. B.: MaxMuster, LisaTest, EinUser, NochEiner" style="min-height:70px"></textarea>';
+    html += '<textarea id="bulkNicks" placeholder="z. B.: MaxMuster, LisaMeier, TomSchmidt, AnnaKoch" style="min-height:70px"></textarea>';
     html += '<div class="row-flex" style="margin-top:8px"><div>Kontrolle ab Datum: <input type="text" id="bulkFrom" style="width:140px" placeholder="TT.MM.JJJJ"></div></div>';
     html += '<div class="typebox" style="margin-top:8px"><b>Meldetypen für alle</b> <span class="muted">(RwV immer automatisch)</span><br>';
     html += '<div class="row-flex" style="margin:6px 0 8px"><span>Vorauswahl nach Rolle:</span>' +
@@ -974,7 +1036,7 @@
     // ----- Abgleich (welche Schützlinge sind NICHT in der Liste?) -----
     html += '<div class="mwrap"><h4>🔄 Abgleich mit aktueller Liste</h4>';
     html += '<div class="muted" style="margin-bottom:6px">Aktuelle Nicks mit Komma getrennt eingeben. Angezeigt werden die vorhandenen Schützlinge, die <b>nicht</b> in deiner Liste stehen – z. B. weil sie nicht mehr kontrolliert werden müssen.</div>';
-    html += '<textarea id="cmpNicks" placeholder="z. B.: MaxMuster, LisaTest, EinUser" style="min-height:60px"></textarea>';
+    html += '<textarea id="cmpNicks" placeholder="z. B.: MaxMuster, LisaMeier, TomSchmidt" style="min-height:60px"></textarea>';
     html += '<div style="margin-top:8px"><button class="mbtn ghost" id="cmpRun">🔍 Abgleichen</button></div>';
     if (state.compareResult) {
       const miss = state.compareResult;
@@ -1883,6 +1945,13 @@
     augmentNativeSearch();
     setTimeout(augmentNativeSearch, 1200);
     setTimeout(augmentNativeSearch, 3000);
+    // Dunkler Seiten-Style als Fallback, wenn der Admincall NICHT laeuft.
+    // Gestaffelt geprueft, damit der Admincall sicher erkannt wird und mit
+    // Admincall garantiert nichts gesetzt wird (kein Aufblitzen).
+    applyPageTheme();
+    setTimeout(applyPageTheme, 600);
+    setTimeout(applyPageTheme, 1500);
+    setTimeout(applyPageTheme, 3500);
   }
 
   if (document.readyState === 'loading') {
