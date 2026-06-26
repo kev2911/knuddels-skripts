@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.12
+// @version      1.13
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -802,13 +802,22 @@
   async function browseReports(protege, maxPages, onProgress, mode) {
     const prelim = [];
     const seen = new Set();
+    // Gleiche Datumsgrenze wie bei der Zufalls-Stichprobe: ab dem bei der Anlage
+    // eingegebenen Datum bzw. - falls bereits kontrolliert wurde - ab der zuletzt
+    // kontrollierten Meldung (nur neuere). Ohne beides: alles.
+    const fromDate = effectiveFromDate(protege);
 
-    // Vorauswahl: alle abgeschlossenen Meldungen einsammeln (der angezeigte
-    // "letzte Bearbeiter" ist nicht zuverlaessig, daher hier nicht hart filtern).
+    // Vorauswahl: abgeschlossene Meldungen ab der Datumsgrenze einsammeln (der
+    // angezeigte "letzte Bearbeiter" ist nicht zuverlaessig, daher hier nicht
+    // hart nach Bewerter filtern - das macht die Detailpruefung unten).
     function collect(doc) {
       parseSearchRows(doc).forEach(row => {
         if (seen.has(row.reportId)) return;
         if (!/geschlossen/i.test(row.status)) return;
+        if (fromDate) {
+          const rd = parseRowDate(row.date);
+          if (!rd || rd < fromDate) return; // aelter als Startdatum -> raus
+        }
         seen.add(row.reportId);
         prelim.push(row);
       });
@@ -940,7 +949,9 @@
     browseResults: null,     // Ergebnisliste der manuellen Suche (oder null)
     textsOpen: false,        // Textbausteine-Panel in Einstellungen aufgeklappt?
     statsOpen: {},           // ausgeklappte Schuetzlinge in der Statistik {id:true}
-    compareResult: null      // Ergebnis des Schuetzlings-Abgleichs (Array oder null)
+    compareResult: null,     // Ergebnis des Schuetzlings-Abgleichs (Array oder null)
+    forwardMode: 'rated',    // Weiterleitungs-Modus der Stichprobe ('rated'|'both'|'forwarded')
+    internal: null           // Interne Kontrolle (Ad-hoc): { nick,name,msLink,from,types,role,mode,count,results,texts,forumText,loading,loadingText }
   };
 
   function buildShell() {
@@ -1380,11 +1391,18 @@
 
   /* ---- Tab: Meldekontrolle ---- */
   function renderControl($body) {
-    let html = '<h3>🔍 Meldekontrolle</h3>';
+    // Eigener Modus: Interne Kontrolle (Ad-hoc, Ausgabe als Forum-Text)
+    if (state.internal) { renderInternalControl($body); return; }
+
+    let html = '<div class="row-flex"><h3 style="margin:0" class="grow">🔍 Meldekontrolle</h3>' +
+      '<button class="mbtn alt" id="ctlInternalOpen">🧪 Interne Kontrolle</button></div>';
 
     if (!Store.proteges.length) {
-      html += '<div class="muted">Bitte zuerst im Tab „Schützlinge" einen Schützling anlegen.</div>';
-      $body.html(html); return;
+      html += '<div class="muted" style="margin-top:10px">Bitte zuerst im Tab „Schützlinge" einen Schützling anlegen.<br>' +
+        'Für eine schnelle Kontrolle ohne gespeicherten Schützling nutze „🧪 Interne Kontrolle" oben rechts.</div>';
+      $body.html(html);
+      $('#ctlInternalOpen').on('click', openInternal);
+      return;
     }
 
     if (!state.controlProtegeId || !Store.protege(state.controlProtegeId)) {
@@ -1450,7 +1468,8 @@
       if (!state.browseResults.length) {
         html += '<div class="muted" style="margin-top:8px">Keine abgeschlossenen Meldungen für diesen Schützling gefunden.</div>';
       } else {
-        html += '<div class="muted" style="margin-top:4px">Hier siehst du <b>alle</b> abgeschlossenen Meldungen dieses Schützlings ' +
+        html += '<div class="muted" style="margin-top:4px">Hier siehst du die abgeschlossenen Meldungen dieses Schützlings ' +
+          'ab der Kontroll-Datumsgrenze' + (effectiveFromDate(protege) ? ' (<b>' + esc(fmtDateDE(effectiveFromDate(protege))) + '</b>)' : ' (keine Grenze gesetzt – alle)') + ' ' +
           '(<span class="pill green" style="margin:0">✓ kontrolliert</span> ' + done + ' &nbsp;·&nbsp; ' +
           '<span class="pill grey" style="margin:0">offen</span> ' + open + '). ' +
           'Mit „→ In Kontrolle" nimmst du einen Eintrag in die aktuelle Sichtung – auch schon bewertete (zur Neubewertung).</div>';
@@ -1523,6 +1542,220 @@
     bindControlEvents(protege);
   }
 
+  /* ---- Interne Kontrolle (Ad-hoc, Ausgabe als Forum-Text) ---- */
+
+  function openInternal() {
+    state.internal = {
+      nick: '', name: '', msLink: '', from: '', types: [], role: '',
+      mode: 'rated', count: 10, results: null, texts: {}, forumText: null,
+      loading: false, loadingText: ''
+    };
+    render();
+  }
+
+  // Fester Forum-Link auf die offizielle Admincall-Domain (damit die Kollegen
+  // ihn aus dem Forum heraus oeffnen koennen, unabhaengig von der Subdomain,
+  // auf der gerade gearbeitet wird).
+  function forumViewcaseUrl(reportId) {
+    return 'https://admincalls-de.knuddels.de/ac/ac_viewcase.pl?domain=knuddels.de&id=' + reportId;
+  }
+
+  // Erzeugt den Forum-Text:
+  //   [url=...id=ID]MELDUNGSNUMMER[/url] - <NL> TEXT <NL> naechster ...
+  function buildForumText(results, texts) {
+    return results.map(row => {
+      const label = row.reportNumber || row.reportId;
+      const t = (texts[row.reportId] || '').trim();
+      return '[url=' + forumViewcaseUrl(row.reportId) + ']' + label + '[/url] - \n' + t;
+    }).join('\n');
+  }
+
+  function renderInternalControl($body) {
+    const ic = state.internal;
+    let html = '<div class="row-flex"><h3 style="margin:0" class="grow">🧪 Interne Kontrolle</h3>' +
+      '<button class="mbtn ghost" id="icBack">← Zurück zur Meldekontrolle</button></div>';
+    html += '<div class="muted" style="margin:6px 0 10px">Ad-hoc-Kontrolle ohne gespeicherten Schützling. ' +
+      'Am Ende kannst du einen Forum-Text mit verlinkten Melde-IDs und deinen Kommentaren erzeugen.</div>';
+
+    // --- Eingabeformular ---
+    html += '<div class="mwrap">';
+    html += '<div class="row-flex"><div class="grow">Nickname: <input type="text" id="icNick" value="' + esc(ic.nick) + '" placeholder="Nickname"></div>';
+    html += '<div class="grow">Name (optional): <input type="text" id="icName" value="' + esc(ic.name) + '" placeholder="Anrede/Name"></div></div>';
+    html += '<div class="row-flex" style="margin-top:8px"><div class="grow">Meldesystem-Link: <input type="text" id="icMs" class="grow" value="' + esc(ic.msLink) + '" placeholder="wird beim Suchen automatisch erzeugt"></div>';
+    html += '<button class="mbtn ghost" id="icGenMs">Aus Nick erzeugen</button></div>';
+    html += '<div class="row-flex" style="margin-top:8px"><div>Kontrolle ab Datum: <input type="text" id="icFrom" style="width:140px" value="' + esc(ic.from) + '" placeholder="TT.MM.JJJJ"></div></div>';
+
+    // Meldetypen + Rollen-Dropdown (wie bei der Schuetzling-Anlage)
+    html += '<div class="typebox" style="margin-top:8px"><b>Berücksichtigte Meldetypen</b> <span class="muted">(RwV-Typen werden immer automatisch mit einbezogen)</span><br>';
+    html += '<div class="row-flex" style="margin:6px 0 8px"><span>Rolle:</span>' +
+      '<select id="icRolePreset"><option value="">– Rolle wählen –</option>';
+    ROLE_PRESETS.forEach(r => {
+      html += '<option value="' + r.key + '"' + (ic.role === r.key ? ' selected' : '') + '>' + esc(r.label) + '</option>';
+    });
+    html += '</select><span class="muted">setzt die Typen der Rolle (überschreibt die Auswahl)</span></div>';
+    REPORT_CATEGORIES.forEach(c => {
+      const checked = ic.types.includes(c.key) ? 'checked' : '';
+      html += '<label class="cb"><input type="checkbox" class="icType" value="' + c.key + '" ' + checked + '> ' + esc(c.label) + '</label>';
+    });
+    html += '</div>';
+
+    // Weiterleitungs-Modus
+    const fmodeOpt = (v, label) => '<option value="' + v + '"' + (ic.mode === v ? ' selected' : '') + '>' + label + '</option>';
+    html += '<div class="row-flex" style="margin-top:8px"><b>Berücksichtigen:</b>' +
+      '<select id="icMode">' +
+        fmodeOpt('rated', 'Ohne Weiterleitungen (nur selbst bewertet)') +
+        fmodeOpt('both', 'Mit Weiterleitungen (bewertet + weitergeleitet)') +
+        fmodeOpt('forwarded', 'Ausschließlich Weiterleitungen') +
+      '</select></div>';
+
+    // Anzahl + Suche
+    html += '<div class="row-flex" style="margin-top:8px"><b>Anzahl:</b>' +
+      '<input type="text" id="icCount" style="width:90px" value="' + esc(String(ic.count)) + '" placeholder="z. B. 10">' +
+      '<button class="mbtn ghost" id="icClear">Keine / Zurücksetzen</button>' +
+      '<div class="grow"></div>' +
+      '<button class="mbtn" id="icRun">🔎 Suche ausführen</button></div>';
+    html += '</div>';
+
+    if (ic.loading) {
+      html += '<div class="mwrap" id="icLoading">⏳ ' + esc(ic.loadingText || 'Lädt ...') + '</div>';
+    }
+
+    // --- Ergebnisse ---
+    if (ic.results) {
+      html += '<div class="mwrap"><h4 style="margin-top:0">Gefundene Meldungen (' + ic.results.length + ')</h4>';
+      if (!ic.results.length) {
+        html += '<div class="muted">Keine passenden Meldungen gefunden. Prüfe Nickname, Datum, Meldetypen und den Weiterleitungs-Modus.</div>';
+      } else {
+        html += '<div class="muted" style="margin-bottom:6px">Schreibe pro Meldung deinen Kontroll-Text. „👁 Vorschau" zeigt die Meldung direkt an.</div>';
+        ic.results.forEach((row) => {
+          html += '<div class="mwrap" style="margin:8px 0">';
+          html += '<div class="row-flex"><div class="grow"><a href="' + viewcaseUrl(row.reportId) + '" target="_blank">' + esc(row.reportNumber || row.reportId) + '</a> ' +
+            '<span class="muted">' + esc(row.typeText || '') + (row.date ? ' • ' + esc(row.date) : '') + '</span></div>' +
+            '<button class="mbtn ghost icPreview" data-id="' + esc(row.reportId) + '">👁 Vorschau</button></div>';
+          html += '<div class="icPreviewBox" data-id="' + esc(row.reportId) + '"></div>';
+          html += '<textarea class="icText" data-id="' + esc(row.reportId) + '" style="margin-top:6px;min-height:70px" placeholder="Dein Kontroll-Text zu dieser Meldung ...">' + esc(ic.texts[row.reportId] || '') + '</textarea>';
+          html += '</div>';
+        });
+        html += '<div style="margin-top:8px"><button class="mbtn" id="icGenForum">📝 Forum-Text generieren</button></div>';
+      }
+      html += '</div>';
+    }
+
+    // --- Generierter Forum-Text ---
+    if (ic.forumText != null) {
+      html += '<div class="mwrap"><h4 style="margin-top:0">📋 Forum-Text</h4>' +
+        '<textarea id="icForumText" style="min-height:220px">' + esc(ic.forumText) + '</textarea>' +
+        '<div class="row-flex" style="margin-top:8px"><button class="mbtn" id="icCopyForum">📋 In die Zwischenablage kopieren</button>' +
+        '<span class="muted">Fertig zum Einfügen ins Forum (BBCode mit verlinkten Melde-IDs).</span></div></div>';
+    }
+
+    $body.html(html);
+    bindInternalEvents();
+  }
+
+  // Liest die aktuellen Formularwerte aus dem DOM in state.internal.
+  function readInternalForm() {
+    const ic = state.internal;
+    ic.nick = $('#icNick').val().trim();
+    ic.name = $('#icName').val().trim();
+    ic.msLink = $('#icMs').val().trim();
+    ic.from = $('#icFrom').val().trim();
+    ic.role = $('#icRolePreset').val() || '';
+    ic.mode = $('#icMode').val() || 'rated';
+    ic.count = $('#icCount').val().trim();
+    ic.types = $('.icType:checked').map(function () { return $(this).val(); }).get();
+  }
+
+  // Liest die pro-Meldung-Texte aus den Textfeldern in state.internal.texts.
+  function readInternalTexts() {
+    const ic = state.internal;
+    $('.icText').each(function () {
+      ic.texts[$(this).data('id')] = $(this).val();
+    });
+  }
+
+  function bindInternalEvents() {
+    const ic = state.internal;
+
+    $('#icBack').on('click', function () { state.internal = null; render(); });
+
+    $('#icGenMs').on('click', function () {
+      const nick = $('#icNick').val().trim();
+      if (!nick) { toast('Bitte zuerst einen Nickname eingeben.'); return; }
+      $('#icMs').val(buildProtegeSearchLink(nick));
+    });
+
+    $('#icRolePreset').on('change', function () {
+      const key = $(this).val();
+      if (!key) return;
+      const preset = ROLE_PRESETS.find(r => r.key === key);
+      if (!preset) return;
+      const set = new Set(preset.types);
+      $('.icType').each(function () { $(this).prop('checked', set.has($(this).val())); });
+    });
+
+    $('#icClear').on('click', function () {
+      readInternalForm();
+      ic.results = null; ic.forumText = null; ic.texts = {};
+      render();
+    });
+
+    $('#icRun').on('click', async function () {
+      if (ic.loading) return;
+      readInternalForm();
+      if (!ic.nick) { toast('Bitte zuerst einen Nickname eingeben.'); return; }
+      const n = parseInt(ic.count, 10);
+      if (!n || n < 1) { toast('Bitte eine gültige Anzahl eingeben (z. B. 10).'); return; }
+      if (ic.from && !parseDateInput(ic.from)) { toast('Datum bitte als TT.MM.JJJJ angeben.'); return; }
+
+      // Temporaerer Schuetzling fuer die Suche (nicht gespeichert)
+      const tmp = new Protege({
+        nick: ic.nick, name: ic.name, meldesystemLink: ic.msLink,
+        reportTypes: ic.types, searchFrom: ic.from, role: ic.role
+      });
+
+      ic.loading = true; ic.loadingText = 'Starte Suche ...'; ic.results = null; ic.forumText = null;
+      render();
+      try {
+        const result = await loadRandomReports(tmp, n, txt => {
+          ic.loadingText = txt;
+          $('#icLoading').text('⏳ ' + txt);
+        }, ic.mode);
+        ic.results = result.reports || [];
+        ic.results.forEach(r => { if (!(r.reportId in ic.texts)) ic.texts[r.reportId] = ''; });
+      } catch (e) {
+        toast('Suche fehlgeschlagen: ' + (e && e.message ? e.message : e));
+        ic.results = [];
+      }
+      ic.loading = false;
+      render();
+    });
+
+    // Vorschau ein-/ausblenden (ohne Re-Render, damit Texte erhalten bleiben)
+    $('.icPreview').on('click', function () {
+      const id = $(this).data('id');
+      const $box = $('.icPreviewBox[data-id="' + id + '"]');
+      if ($box.children().length) { $box.empty(); return; }
+      $box.html('<iframe class="preview" src="' + viewcaseUrl(id) + '"></iframe>');
+    });
+
+    // Texteingaben laufend in den State sichern
+    $('.icText').on('input', function () {
+      ic.texts[$(this).data('id')] = $(this).val();
+    });
+
+    $('#icGenForum').on('click', function () {
+      readInternalTexts();
+      ic.forumText = buildForumText(ic.results, ic.texts);
+      render();
+    });
+
+    $('#icCopyForum').on('click', function () {
+      copyToClipboard($('#icForumText').val());
+      toast('Forum-Text in die Zwischenablage kopiert.');
+    });
+  }
+
   function renderReviewCard(protege, row, idx) {
     const existing = Store.findReview(protege.id, row.reportId);
     const rating = existing ? existing.rating : '';
@@ -1549,6 +1782,7 @@
   }
 
   function bindControlEvents(protege) {
+    $('#ctlInternalOpen').on('click', openInternal);
     $('#ctlProtege').on('change', function () {
       state.controlProtegeId = $(this).val();
       state.pending = []; state.message = null; state.browseResults = null; render();
