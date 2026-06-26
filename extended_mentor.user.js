@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.13
+// @version      1.14
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -1553,21 +1553,59 @@
     render();
   }
 
-  // Fester Forum-Link auf die offizielle Admincall-Domain (damit die Kollegen
-  // ihn aus dem Forum heraus oeffnen koennen, unabhaengig von der Subdomain,
-  // auf der gerade gearbeitet wird).
-  function forumViewcaseUrl(reportId) {
-    return 'https://admincalls-de.knuddels.de/ac/ac_viewcase.pl?domain=knuddels.de&id=' + reportId;
-  }
-
-  // Erzeugt den Forum-Text:
-  //   [url=...id=ID]MELDUNGSNUMMER[/url] - <NL> TEXT <NL> naechster ...
+  // Erzeugt den Forum-Text als monospace-Tabelle im [code]-Block:
+  //   Melde-ID       | Beschreibung
+  //   ---------------+-----------------------------------------------------
+  //   *1.419.392.039 | Text (bei Bedarf umgebrochen) ...
+  //                  | ... Fortsetzung
+  // Lange Beschreibungen werden an Wortgrenzen umgebrochen und unter der
+  // Beschreibungs-Spalte eingerueckt fortgesetzt.
   function buildForumText(results, texts) {
-    return results.map(row => {
-      const label = row.reportNumber || row.reportId;
-      const t = (texts[row.reportId] || '').trim();
-      return '[url=' + forumViewcaseUrl(row.reportId) + ']' + label + '[/url] - \n' + t;
-    }).join('\n');
+    const PLACEHOLDER = 'Hier kommt eine Beschreibung zur Meldebearbeitung rein.';
+    const DESC_WIDTH = 60; // Umbruchbreite der Beschreibungs-Spalte
+    const idHeader = 'Melde-ID';
+    const labelOf = row => row.reportNumber || row.reportId;
+
+    // Spaltenbreite der Melde-ID dynamisch an den laengsten Eintrag anpassen
+    let idWidth = idHeader.length;
+    results.forEach(row => { idWidth = Math.max(idWidth, labelOf(row).length); });
+    idWidth += 1; // etwas Luft vor dem Trennstrich
+
+    const padEnd = (s, n) => { s = String(s); return s.length >= n ? s : s + ' '.repeat(n - s.length); };
+
+    // Wort-Umbruch (bricht an Leerzeichen; ueberlange Einzelwoerter werden hart getrennt)
+    function wrap(text, width) {
+      const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
+      const lines = [];
+      let cur = '';
+      words.forEach(w => {
+        while (w.length > width) { // sehr langes Wort hart umbrechen
+          if (cur) { lines.push(cur); cur = ''; }
+          lines.push(w.slice(0, width));
+          w = w.slice(width);
+        }
+        if (!cur) cur = w;
+        else if ((cur + ' ' + w).length <= width) cur += ' ' + w;
+        else { lines.push(cur); cur = w; }
+      });
+      if (cur) lines.push(cur);
+      return lines.length ? lines : [''];
+    }
+
+    const lines = [];
+    lines.push(padEnd(idHeader, idWidth) + '| Beschreibung');
+    lines.push('-'.repeat(idWidth) + '+' + '-'.repeat(DESC_WIDTH + 1));
+    results.forEach(row => {
+      const id = labelOf(row);
+      const text = (texts[row.reportId] || '').trim() || PLACEHOLDER;
+      const wrapped = wrap(text, DESC_WIDTH);
+      wrapped.forEach((line, i) => {
+        const left = i === 0 ? padEnd(id, idWidth) : padEnd('', idWidth);
+        lines.push(left + '| ' + line);
+      });
+    });
+
+    return '[code]\n' + lines.join('\n') + '\n[/code]';
   }
 
   function renderInternalControl($body) {
