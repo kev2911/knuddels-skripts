@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.05
+// @version      1.06
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -473,13 +473,17 @@
     }
   }
 
-  // Dosis-Font sicherheitshalber laden (separates <link> -> wird nicht ueberschrieben)
+  // WICHTIG: Wir laden Dosis BEWUSST NICHT selbst.
+  // Der Extended Admincall laedt die Schrift ebenfalls nicht aktiv, sondern setzt
+  // nur "font-family: Dosis, sans-serif" und nutzt das, was die Knuddels-Seite
+  // bereitstellt. Wuerden wir Dosis hier per Google Fonts nachladen, saehe unser
+  // Panel anders (schmaler/kleiner) aus als der Rest der Seite. Damit Mentor und
+  // Admincall identisch aussehen, verlassen wir uns auf dieselbe Schrift-Aufloesung.
   function injectFont() {
-    if (document.getElementById('mentorFont')) return;
-    const l = document.createElement('link');
-    l.id = 'mentorFont'; l.rel = 'stylesheet';
-    l.href = 'https://fonts.googleapis.com/css2?family=Dosis:wght@400;600;700&display=swap';
-    document.head.appendChild(l);
+    // Alten, von frueheren Versionen eingefuegten Font-Link wieder entfernen,
+    // damit nach einem Update keine abweichende Schrift haengen bleibt.
+    const old = document.getElementById('mentorFont');
+    if (old) old.remove();
   }
 
   function currentTheme() {
@@ -1654,7 +1658,7 @@
   function nativeBadge(text, bg) {
     return '<span style="display:inline-block;background:' + bg + ';color:#fff;' +
       'font-size:11px;font-weight:bold;padding:1px 7px;border-radius:10px;' +
-      'font-family:Dosis,Verdana,sans-serif;white-space:nowrap">' + text + '</span>';
+      'font-family:"Dosis", sans-serif;white-space:nowrap">' + text + '</span>';
   }
 
   function renderNativeRowMarker($cell, protege, row) {
@@ -1674,7 +1678,7 @@
     } else {
       const $btn = $('<button type="button" style="' +
         'background:rgb(175,142,232);color:#fff;border:1px solid transparent;border-radius:3px;' +
-        'font-family:Dosis,Verdana,sans-serif;font-size:12px;font-weight:bold;padding:3px 9px;' +
+        'font-family:"Dosis", sans-serif;font-size:12px;font-weight:bold;padding:3px 9px;' +
         'cursor:pointer;white-space:nowrap">\u2192 zur Kontrolle</button>');
       $btn.on('click', function (e) {
         e.preventDefault(); e.stopPropagation();
