@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.00
+// @version      1.01
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
-// @match        https://*.knuddels.de*/ac/*
+// @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
 // @require      https://code.jquery.com/jquery-3.3.1.min.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_info
-// @downloadURL  https://raw.githubusercontent.com/inflames2k/Scripts/refs/heads/main/extended_mentor.user.js
-// @updateURL    https://raw.githubusercontent.com/inflames2k/Scripts/refs/heads/main/extended_mentor.user.js
+// @downloadURL  https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/extended_mentor.user.js
+// @updateURL    https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/extended_mentor.user.js
 // ==/UserScript==
 
 (function () {
