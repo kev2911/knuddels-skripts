@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.06
+// @version      1.07
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -570,18 +570,67 @@
     return cats.some(c => { try { return c.match(typeText); } catch (e) { return false; } });
   }
 
+  // Liest aus dem HTML einer Meldungs-Detailseite (ac_viewcase.pl) den Nick
+  // desjenigen, der die Meldung tatsaechlich BEWERTET hat.
+  // Quelle: "HINWEIS: Meldung bereits bewertet (von: <b>NICK</b>, Berechtigt, ...)"
+  // Gibt den Nick (String) oder '' zurueck, wenn nicht gefunden.
+  function extractRaterNick(html) {
+    try {
+      const doc = $.parseHTML(html);
+      let nick = '';
+
+      // 1) Bevorzugt: der Hinweis "Meldung bereits bewertet (von: NICK, ...)"
+      $(doc).find('p').each(function () {
+        if (nick) return;
+        const t = $(this).text().replace(/\s+/g, ' ').trim();
+        const m = t.match(/Meldung bereits bewertet\s*\(von:\s*([^,]+?)\s*,/i);
+        if (m) nick = m[1].trim();
+      });
+      if (nick) return nick;
+
+      // 2) Fallback: gesamten Seitentext nach demselben Muster durchsuchen
+      const whole = $(doc).text().replace(/\s+/g, ' ');
+      const m2 = whole.match(/Meldung bereits bewertet\s*\(von:\s*([^,]+?)\s*,/i);
+      if (m2) return m2[1].trim();
+
+      return '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  // Prueft per Detailseite, ob die Meldung vom Schuetzling bewertet wurde.
+  // Cache, damit dieselbe Meldung nicht mehrfach geladen wird.
+  const _raterCache = {};
+  async function reportRatedByProtege(reportId, protege) {
+    let rater = _raterCache[reportId];
+    if (rater === undefined) {
+      try {
+        const html = await gmGet(viewcaseUrl(reportId));
+        rater = extractRaterNick(html);
+      } catch (e) {
+        rater = '';
+      }
+      _raterCache[reportId] = rater;
+    }
+    if (!rater) return false;
+    return normalizeNick(rater) === normalizeNick(protege.nick);
+  }
+
   async function loadRandomReports(protege, count, onProgress) {
     const reviewedIds = new Set(Store.reviewsFor(protege.id).map(r => r.reportId));
     const fromDate = effectiveFromDate(protege);
     const candidates = [];
     const seen = new Set();
 
+    // Vorauswahl aus der Suchliste: guenstige Filter (Status/Typ/Datum/bereits gesichtet).
+    // Der angezeigte "letzte Bearbeiter" ist NICHT zuverlaessig der Bewerter, daher wird
+    // er hier nur als grobe Vorauswahl genutzt und unten per Detailseite verifiziert.
     function collect(doc) {
       parseSearchRows(doc).forEach(row => {
         if (seen.has(row.reportId)) return;
         if (reviewedIds.has(row.reportId)) return;
         if (!/geschlossen/i.test(row.status)) return;
-        if (normalizeNick(row.bearbeiter) !== normalizeNick(protege.nick)) return;
         if (!typeMatches(protege, row.typeText)) return;
         if (fromDate) {
           const rd = parseRowDate(row.date);
@@ -602,22 +651,40 @@
     for (let p = 1; p <= maxPage; p++) pages.push(p);
     shuffle(pages);
 
+    // Verifizierte Treffer: nur Meldungen, die der Schuetzling laut Detailseite
+    // ("Meldung bereits bewertet (von: NICK ...)") wirklich bewertet hat.
+    const verified = [];
+    shuffle(candidates);
+
+    async function verifyFrom(list) {
+      for (let i = 0; i < list.length && verified.length < count; i++) {
+        const row = list[i];
+        if (onProgress) onProgress('Pruefe Meldungen ... (' + verified.length + ' von ' + count + ' bestaetigt)');
+        if (await reportRatedByProtege(row.reportId, protege)) verified.push(row);
+      }
+    }
+
+    await verifyFrom(candidates);
+
     let fetched = 1;
-    const target = Math.max(count * 3, count + 5);
-    while (candidates.length < target && pages.length > 0 && fetched < MAX_PAGE_FETCH) {
+    // Solange noch nicht genug verifizierte gefunden: weitere Seiten laden und pruefen.
+    while (verified.length < count && pages.length > 0 && fetched < MAX_PAGE_FETCH) {
       const p = pages.shift();
-      if (onProgress) onProgress('Suche noch nicht gesichtete Meldungen ... (' + candidates.length + ' gefunden)');
+      if (onProgress) onProgress('Lade weitere Meldungen ... (' + verified.length + ' von ' + count + ' bestaetigt)');
       try {
+        const before = candidates.length;
         const html = await gmGet(buildSearchUrl(protege.nick, p));
         collect($.parseHTML(html));
+        const fresh = candidates.slice(before);
+        shuffle(fresh);
+        await verifyFrom(fresh);
       } catch (e) { /* Seite ueberspringen */ }
       fetched++;
     }
 
-    shuffle(candidates);
-    // exhausted = wir haben alle Seiten gesehen und trotzdem weniger als gewuenscht gefunden
-    const exhausted = (pages.length === 0) && (candidates.length < count);
-    return { reports: candidates.slice(0, count), found: candidates.length, exhausted };
+    // exhausted = alle Seiten gesehen und trotzdem weniger als gewuenscht bestaetigt
+    const exhausted = (pages.length === 0) && (verified.length < count);
+    return { reports: verified.slice(0, count), found: verified.length, exhausted };
   }
 
   // Liefert eine durchsuchbare Liste der Meldungen eines Schuetzlings (in Reihenfolge,
@@ -627,16 +694,17 @@
   // Nutzer ALLE abgeschlossenen Meldungen sehen (inkl. bereits kontrollierter) und frei
   // auswaehlen koennen. Die Filter gelten nur fuer die Zufalls-Stichprobe.
   async function browseReports(protege, maxPages, onProgress) {
-    const out = [];
+    const prelim = [];
     const seen = new Set();
 
+    // Vorauswahl: alle abgeschlossenen Meldungen einsammeln (der angezeigte
+    // "letzte Bearbeiter" ist nicht zuverlaessig, daher hier nicht hart filtern).
     function collect(doc) {
       parseSearchRows(doc).forEach(row => {
         if (seen.has(row.reportId)) return;
         if (!/geschlossen/i.test(row.status)) return;
-        if (normalizeNick(row.bearbeiter) !== normalizeNick(protege.nick)) return;
         seen.add(row.reportId);
-        out.push(row);
+        prelim.push(row);
       });
     }
 
@@ -648,11 +716,19 @@
 
     const limit = Math.min(maxPages, maxPage);
     for (let p = 1; p <= limit; p++) {
-      if (onProgress) onProgress('Lade Seite ' + (p + 1) + ' ... (' + out.length + ' gefunden)');
+      if (onProgress) onProgress('Lade Seite ' + (p + 1) + ' ... (' + prelim.length + ' gefunden)');
       try {
         const html = await gmGet(buildSearchUrl(protege.nick, p));
         collect($.parseHTML(html));
       } catch (e) { /* ueberspringen */ }
+    }
+
+    // Verifikation: nur Meldungen behalten, die der Schuetzling laut Detailseite
+    // ("Meldung bereits bewertet (von: NICK ...)") tatsaechlich bewertet hat.
+    const out = [];
+    for (let i = 0; i < prelim.length; i++) {
+      if (onProgress) onProgress('Pruefe Meldungen ... (' + out.length + ' bestaetigt, ' + (i + 1) + '/' + prelim.length + ')');
+      if (await reportRatedByProtege(prelim[i].reportId, protege)) out.push(prelim[i]);
     }
     return out;
   }
@@ -770,7 +846,7 @@
       <div class="mentor-overlay" id="mentorOverlay">
         <div class="mentor-modal">
           <div class="mentor-head">
-            <h2>🎓 Extended Mentor</h2>
+            <h2>🎓 Mentoring</h2>
             <button class="mentor-close" id="mentorCloseBtn" title="Schließen">&times;</button>
           </div>
           <div class="mentor-tabs">
@@ -805,7 +881,14 @@
   function addNavLink() {
     const $navi = $('#navi');
     if (!$navi.length || $('#mentorNavLink').length) return;
-    $navi.append(' | <a href="#" id="mentorNavLink">Extended Mentor</a>');
+
+    // Auf manchen Seiten (z. B. der Suche) endet die native Navigation bereits mit
+    // einem " | "-Trenner. Wuerden wir nochmal " | " voranstellen, entstuenden zwei
+    // Pipes. Daher: ein evtl. vorhandenes Trenner-Ende entfernen und genau einen
+    // Separator setzen.
+    let html = $navi.html().replace(/(\s*\|\s*)+$/, '');
+    $navi.html(html + ' | <a href="#" id="mentorNavLink">Mentoring</a>');
+
     $(document).off('click.mentorNav').on('click.mentorNav', '#mentorNavLink', function (e) {
       e.preventDefault(); openModal();
     });
@@ -1722,7 +1805,11 @@
       const date = spans.eq(0).text().trim();
       const status = spans.eq(spans.length - 1).text().trim();
 
-      // Nur fuer Schuetzlinge (letzter Bearbeiter)
+      // Schnelle Heuristik fuer die LIVE-Suchseite: hier wird der angezeigte
+      // "letzte Bearbeiter" genutzt, um nur bei Schuetzlingen einen Button
+      // einzublenden. Ein Detailabruf pro Zeile waere hier zu langsam. Die
+      // verlaessliche Bewerter-Pruefung (Detailseite) erfolgt in der Zufalls-
+      // Stichprobe und der manuellen Suche im Mentor-Panel.
       const protege = findProtegeByNick(bearbeiter);
       if (!protege) return;
 
