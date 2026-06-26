@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.02
+// @version      1.03
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1445,8 +1445,12 @@ const chrome = {
             $row.append($imgs);
 
             $row.append(NewLayout.headNode($info));
-            // Verify: Ablehnungs-Verlauf (Datum + verlinktes Foto + Grund) mit Hover-Vorschau
+            // Verify: vorherige Kontrolle (2. Instanz) + Ablehnungs-Verlauf
             if (page === 'verify') {
+                try {
+                    const $vp = NewLayout.buildVerifyPriorControl($mainCell);
+                    if ($vp) $row.append($vp);
+                } catch (e) { console.error('[kn-fotoadmin] verifyPrior:', e); }
                 try {
                     const $rej = NewLayout.buildVerifyRejections($mainCell);
                     if ($rej) $row.append($rej);
@@ -1466,6 +1470,51 @@ const chrome = {
                 } catch (e) { console.error('[kn-fotoadmin] verifyInstr row:', e); }
             }
             return $row;
+        }
+
+        // Liest „vorherige Kontrolle durch: NAME (DATUM)" (2. Instanz) aus der new_photo-Zelle.
+        static verifyPriorControl($cell) {
+            if (!$cell || !$cell.length) return null;
+            let result = null;
+            $cell.find('strong').each(function () {
+                const s = this;
+                // Vorheriger sichtbarer Text (über <br>/Leertext hinweg)
+                let prev = '';
+                for (let n = s.previousSibling; n; n = n.previousSibling) {
+                    if (n.nodeType === 3) {
+                        const t = (n.nodeValue || '').trim();
+                        if (t) { prev = t; break; }
+                    } else if (n.nodeType === 1 && /^br$/i.test(n.tagName)) {
+                        continue;
+                    } else if (n.nodeType === 1) {
+                        break;
+                    }
+                }
+                if (!/vorherige Kontrolle durch/i.test(prev)) return;
+                const name = ($(s).text() || '').trim();
+                let date = '';
+                for (let f = s.nextSibling; f; f = f.nextSibling) {
+                    if (f.nodeType === 3) {
+                        const t = (f.nodeValue || '').trim();
+                        if (t) { date = t; break; }
+                    } else if (f.nodeType === 1 && /^br$/i.test(f.tagName)) {
+                        break;
+                    }
+                }
+                date = date.replace(/^[\(\s]+|[\)\s]+$/g, '').trim();
+                if (name) { result = { name: name, date: date }; return false; }
+            });
+            return result;
+        }
+
+        static buildVerifyPriorControl($cell) {
+            const d = NewLayout.verifyPriorControl($cell);
+            if (!d || !d.name) return null;
+            const $b = $('<div class="epa-vprior"></div>');
+            $b.append($('<span class="epa-vprior-label">Vorherige Kontrolle</span>'));
+            $b.append($('<span class="epa-vprior-val"></span>')
+                .text(d.name + (d.date ? ' \u00b7 ' + d.date : '')));
+            return $b;
         }
 
         // Liest die geforderte Geste exakt aus dem „Code:"-Strong der new_photo-Zelle.
@@ -2434,6 +2483,14 @@ const chrome = {
                     color:#9f1239; }
                 .epa-vrej-reason { font:500 13px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
                     color:#7c2d12; line-height:1.4; margin-top:2px; }
+                /* --- Vorherige Kontrolle (2. Instanz) --- */
+                .epa-vprior { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+                    padding:7px 11px; border-radius:10px; background:#eff6ff; border:1px solid #bfdbfe;
+                    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; }
+                .epa-vprior-label { font:700 11px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+                    letter-spacing:.04em; text-transform:uppercase; color:#1d4ed8; }
+                .epa-vprior-val { font:600 13px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+                    color:#1e3a5f; }
                 /* --- Sperrdauer-Steuerung --- */
                 .epa-lock { opacity:.65; }
                 .epa-lock.epa-lock-on { opacity:1; }
