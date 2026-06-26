@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.07
+// @version      1.08
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -48,6 +48,24 @@
     { key: 'sexbel',        label: 'Sexuelle Belästigung melden',       match: t => t.startsWith('Sexuelle Bel') },
     { key: 'spiel',         label: 'Spielverhalten melden',             match: t => t.startsWith('Spielverhalten') },
     { key: 'suizid',        label: 'Suizid-/Amokankündigung melden',    match: t => t.startsWith('Suizid') }
+  ];
+
+  // Rollen-Vorauswahl fuer Meldetypen. Bei Auswahl einer Rolle werden GENAU die
+  // hinterlegten Typen angekreuzt und alle anderen geleert ("Ersetzen").
+  // Die Werte sind die "key"-Felder aus REPORT_CATEGORIES.
+  const ROLE_PRESETS = [
+    { key: 'standard', label: 'Standard (alle Meldetypen)',
+      types: REPORT_CATEGORIES.map(c => c.key) },
+    { key: 'admin', label: 'Admin',
+      types: ['allgemeines', 'aussage', 'profilinhalt', 'sexbel', 'spiel', 'suizid'] },
+    { key: 'profilteam', label: 'Profil-Team',
+      types: ['allgemeines', 'profilbilder', 'profilinhalt', 'altergeschl'] },
+    { key: 'juschu', label: 'JuSchu-Team',
+      types: ['allgemeines', 'aussage', 'profilinhalt', 'jugend', 'sexbel'] },
+    { key: 'aeteam', label: 'AE-Team',
+      types: ['allgemeines', 'aussage', 'extrem'] },
+    { key: 'cm', label: 'CM',
+      types: ['allgemeines', 'aussage', 'sexbel'] }
   ];
 
   // Standard-Textbausteine der Mentoren-Nachricht. Diese koennen vom Nutzer in den
@@ -923,6 +941,10 @@
     html += '</table>';
 
     html += '<div class="typebox"><b>Berücksichtigte Meldetypen</b> <span class="muted">(RwV-Typen werden immer automatisch mit einbezogen)</span><br>';
+    html += '<div class="row-flex" style="margin:6px 0 8px"><span>Vorauswahl nach Rolle:</span>' +
+      '<select id="pgRolePreset"><option value="">– Rolle wählen –</option>';
+    ROLE_PRESETS.forEach(r => { html += '<option value="' + r.key + '">' + esc(r.label) + '</option>'; });
+    html += '</select><span class="muted">setzt genau die Typen der Rolle (überschreibt die Auswahl)</span></div>';
     REPORT_CATEGORIES.forEach(c => {
       const checked = p.reportTypes.includes(c.key) ? 'checked' : '';
       html += '<label class="cb"><input type="checkbox" class="pgType" value="' + c.key + '" ' + checked + '> ' + esc(c.label) + '</label>';
@@ -939,6 +961,10 @@
     html += '<textarea id="bulkNicks" placeholder="z. B.: MaxMuster, LisaTest, EinUser, NochEiner" style="min-height:70px"></textarea>';
     html += '<div class="row-flex" style="margin-top:8px"><div>Kontrolle ab Datum: <input type="text" id="bulkFrom" style="width:140px" placeholder="TT.MM.JJJJ"></div></div>';
     html += '<div class="typebox" style="margin-top:8px"><b>Meldetypen für alle</b> <span class="muted">(RwV immer automatisch)</span><br>';
+    html += '<div class="row-flex" style="margin:6px 0 8px"><span>Vorauswahl nach Rolle:</span>' +
+      '<select id="bulkRolePreset"><option value="">– Rolle wählen –</option>';
+    ROLE_PRESETS.forEach(r => { html += '<option value="' + r.key + '">' + esc(r.label) + '</option>'; });
+    html += '</select><span class="muted">setzt genau die Typen der Rolle (überschreibt die Auswahl)</span></div>';
     REPORT_CATEGORIES.forEach(c => {
       html += '<label class="cb"><input type="checkbox" class="bulkType" value="' + c.key + '"> ' + esc(c.label) + '</label>';
     });
@@ -1002,6 +1028,29 @@
   }
 
   function bindProtegesEvents() {
+    // Setzt die Meldetypen-Checkboxen (Klasse cbClass) anhand einer Rolle.
+    // "Ersetzen": genau die Typen der Rolle ankreuzen, alle anderen abwaehlen.
+    function applyRolePreset(roleKey, cbClass) {
+      const preset = ROLE_PRESETS.find(r => r.key === roleKey);
+      if (!preset) return;
+      const set = new Set(preset.types);
+      $('.' + cbClass).each(function () {
+        $(this).prop('checked', set.has($(this).val()));
+      });
+    }
+
+    $('#pgRolePreset').on('change', function () {
+      const key = $(this).val();
+      if (!key) return;
+      applyRolePreset(key, 'pgType');
+    });
+
+    $('#bulkRolePreset').on('change', function () {
+      const key = $(this).val();
+      if (!key) return;
+      applyRolePreset(key, 'bulkType');
+    });
+
     $('#pgGenMs').on('click', function () {
       const nick = $('#pgNick').val().trim();
       if (!nick) { toast('Bitte zuerst einen Nickname eingeben.'); return; }
@@ -1354,11 +1403,12 @@
 
     // Generierte Nachricht
     if (state.message != null) {
+      const hasForum = !!(protege.forumLink && protege.forumLink.trim());
       html += '<div class="mwrap"><h4>✉️ Generierte Nachricht</h4>' +
         '<textarea id="ctlMsgText" style="min-height:240px">' + esc(state.message) + '</textarea>' +
         '<div class="row-flex" style="margin-top:8px">' +
         '<button class="mbtn" id="ctlCopyMsg">📋 Nachricht kopieren</button>' +
-        '<button class="mbtn ghost" id="ctlCopyForum">📋 Forum-Kopie ([quote]) kopieren</button>' +
+        (hasForum ? '<button class="mbtn ghost" id="ctlCopyForum">📋 Forum öffnen &amp; Text kopieren</button>' : '') +
         '<div class="grow"></div>' +
         '<button class="mbtn alt" id="ctlMarkSent">✅ Als versendet markieren</button>' +
         '</div><div class="muted" style="margin-top:6px">„Als versendet markieren" verschiebt die enthaltenen Befunde in die Statistik (kein Versand mehr ausstehend).</div></div>';
@@ -1570,8 +1620,11 @@
       toast('Nachricht in die Zwischenablage kopiert.');
     });
     $('#ctlCopyForum').on('click', function () {
+      // Erst Text in die Zwischenablage, dann das Forum im neuen Tab oeffnen.
       copyToClipboard(forumQuote($('#ctlMsgText').val()));
-      toast('Forum-Kopie ([quote]) in die Zwischenablage kopiert.');
+      const url = (protege.forumLink || '').trim();
+      if (url) window.open(url, '_blank');
+      toast('Forum-Kopie ([quote]) kopiert – Forum wird geöffnet.');
     });
     $('#ctlMarkSent').on('click', function () {
       if (!confirm('Die enthaltenen Befunde als versendet markieren?')) return;
