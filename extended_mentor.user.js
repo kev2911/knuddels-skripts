@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.09
+// @version      1.10
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -416,6 +416,37 @@
     #mentorRoot textarea { width:100%; min-height:60px; resize:vertical; }
     #mentorRoot label.cb { display:inline-flex; align-items:center; gap:5px; margin:3px 12px 3px 0; font-size:14px; cursor:pointer; }
 
+    /* --- Absicherung gegen durchschlagende Standard-Styles der Knuddels-Seite ---
+       Ohne den Extended Admincall faerbt die rohe Meldesystem-Seite (style0.css)
+       globale Elemente wie td/th/select/Text hell bzw. mit dunkler Schrift. Diese
+       Regeln koennen in unser Panel "durchschlagen", sodass dort graue/weisse
+       oder schlecht lesbare Stellen entstehen (v.a. in Schuetzlinge, Eigene
+       Einstellungen, Statistik). Die folgenden Regeln setzen die Farben INNERHALB
+       des Panels explizit, damit es immer konsistent dunkel/lesbar bleibt - egal
+       ob der Admincall laeuft oder nicht. Die Knuddels-Seite selbst wird NICHT
+       angefasst. Steht bewusst VOR den .mtab-/Pill-Regeln, damit deren gewollte
+       Akzentfarben erhalten bleiben. */
+    #mentorRoot .mentor-body,
+    #mentorRoot .mentor-body p, #mentorRoot .mentor-body div,
+    #mentorRoot .mentor-body span, #mentorRoot .mentor-body b,
+    #mentorRoot .mentor-body i, #mentorRoot .mentor-body small,
+    #mentorRoot .mentor-body label, #mentorRoot .mentor-body li,
+    #mentorRoot .mentor-body td, #mentorRoot .mentor-body th,
+    #mentorRoot .mentor-body h3, #mentorRoot .mentor-body h4 {
+      color: var(--text);
+    }
+    /* generische Tabellen ohne eigene Klasse nicht hell erben lassen */
+    #mentorRoot .mentor-body table { background: transparent; border-collapse: collapse; }
+    #mentorRoot .mentor-body tr,
+    #mentorRoot .mentor-body td,
+    #mentorRoot .mentor-body th { background-color: transparent; }
+    /* alle Eingabefelder (ausser Haekchen) lesbar einfaerben */
+    #mentorRoot .mentor-body input:not([type=checkbox]):not([type=radio]):not([type=file]),
+    #mentorRoot .mentor-body select,
+    #mentorRoot .mentor-body textarea {
+      background: var(--field) !important; color: var(--fieldtext) !important;
+    }
+
     /* Tabellen */
     #mentorRoot table.mtab {
       width:100% !important; border-collapse:collapse !important; font-size:14px;
@@ -506,68 +537,6 @@
 
   function currentTheme() {
     return (localStorage.getItem('reportStyle') || 'Dark') === 'Light' ? 'light' : 'dark';
-  }
-
-  // Erkennt, ob der Extended Admincall auf dieser Seite aktiv ist.
-  // Der Admincall hinterlaesst sehr charakteristische Spuren im DOM:
-  //  - er versieht Buttons mit der Klasse .modern-button
-  //  - er fuegt ein Einstellungen-/Changelog-Menue (#settings, #changelog) hinzu
-  //  - er haengt seinen Namen an den Footer ("... Extended Admincall <version>")
-  function isAdmincallActive() {
-    if (document.querySelector('.modern-button')) return true;
-    if (document.getElementById('settings') && document.getElementById('changelog')) return true;
-    const ft = document.getElementById('footer');
-    if (ft && /Admincall/i.test(ft.textContent || '')) return true;
-    return false;
-  }
-
-  // Dunkler Grund-Style fuer die Knuddels-Seite, der NUR dann gesetzt wird, wenn
-  // der Admincall NICHT laeuft. So ist die Seite auch ohne Admincall gut lesbar
-  // (dunkler Hintergrund, heller Text). Laeuft der Admincall, halten wir uns
-  // komplett raus und entfernen einen evtl. gesetzten Style wieder -> dann sieht
-  // alles GENAU so aus wie mit Admincall.
-  function pageThemeCss() {
-    return `
-      html, body { background-color:#1c1c1c !important; color:#f2f2f2 !important; }
-      #main { background-color:#1c1c1c !important; }
-      #header { color:#fff !important; }
-      #footer { color:#f2f2f2 !important; }
-      a { color:rgb(175,142,232) !important; }
-      a:hover { color:#ff5555 !important; }
-      /* helle Inhaltskaesten abdunkeln */
-      .caseinfo2, .reportHint,
-      [style*="background:#eee"], [style*="background: #eee"],
-      [style*="background:#ddd"], [style*="background: #ddd"],
-      [style*="background:#f0f0f0"], [style*="background: #f0f0f0"] {
-        background:#242424 !important; background-color:#242424 !important;
-      }
-      .log, .content-type-section { background-color:#000 !important; }
-      .content-type-section h4 { background-color:#2b2b2b !important; color:#f2f2f2 !important; }
-      /* Tabellen lesbar */
-      th { background-color:rgba(175,142,232,.5) !important; color:#f2f2f2 !important; }
-      td { color:#f2f2f2; }
-      /* schwarzer Text, der auf dunklem Grund untergehen wuerde, aufhellen */
-      .colorReset,
-      [style*="color:#000000"], [style*="color: #000000"],
-      [style*="color:#000;"], [style*="color: #000;"] { color:#f2f2f2 !important; }
-      /* Eingabefelder lesbar */
-      input[type=text], input[type=password], input[type=number],
-      textarea, select { background-color:#000 !important; color:#fff !important; }
-    `;
-  }
-
-  function applyPageTheme() {
-    const existing = document.getElementById('mentorPageTheme');
-    if (isAdmincallActive()) {
-      // Admincall stylt die Seite selbst -> unseren Fallback wieder entfernen.
-      if (existing) existing.remove();
-      return;
-    }
-    if (existing) return; // schon gesetzt, nichts zu tun
-    const s = document.createElement('style');
-    s.id = 'mentorPageTheme';
-    s.textContent = pageThemeCss();
-    document.head.appendChild(s);
   }
 
   /* =========================================================================
@@ -1945,13 +1914,6 @@
     augmentNativeSearch();
     setTimeout(augmentNativeSearch, 1200);
     setTimeout(augmentNativeSearch, 3000);
-    // Dunkler Seiten-Style als Fallback, wenn der Admincall NICHT laeuft.
-    // Gestaffelt geprueft, damit der Admincall sicher erkannt wird und mit
-    // Admincall garantiert nichts gesetzt wird (kein Aufblitzen).
-    applyPageTheme();
-    setTimeout(applyPageTheme, 600);
-    setTimeout(applyPageTheme, 1500);
-    setTimeout(applyPageTheme, 3500);
   }
 
   if (document.readyState === 'loading') {
