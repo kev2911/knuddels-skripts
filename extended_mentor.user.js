@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.03
+// @version      1.04
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -264,6 +264,22 @@
     return Store.proteges.find(p => normalizeNick(p.nick) === n);
   }
 
+  // Zerlegt eine kommagetrennte (oder zeilenweise) Nick-Liste in saubere Eintraege.
+  // Doppelte (case-insensitiv) werden zusammengefasst; Reihenfolge bleibt erhalten.
+  function parseNickList(str) {
+    const out = [];
+    const seen = new Set();
+    (str || '').split(/[,;\n]+/).forEach(part => {
+      const nick = part.trim();
+      if (!nick) return;
+      const key = normalizeNick(nick);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(nick);
+    });
+    return out;
+  }
+
   /* =========================================================================
    *  STYLING (gescopt unter #mentorRoot, Constructable Stylesheet -> wird
    *  von Extended Admincall NICHT ueberschrieben)
@@ -277,7 +293,7 @@
       --bg: #1c1c1c; --panel: #242424; --panel2:#000; --text:#f2f2f2;
       --border:#000; --muted:#9a9a9a; --field:#000; --fieldtext:#fff;
       --row:#000; --rowalt:#1c1c1c;
-      font-family: "Dosis", sans-serif;
+      font-family: "Dosis", sans-serif; font-size:14px;
     }
     #mentorRoot.mentor-light {
       --bg:#fff; --panel:#fff; --panel2:#f7f7f7; --text:#222;
@@ -377,14 +393,14 @@
     #mentorRoot input[type=text], #mentorRoot textarea, #mentorRoot select {
       background: var(--field); color: var(--fieldtext);
       border:1px solid rgba(var(--acc),.5); border-radius:4px;
-      padding:5px 7px; font-family:"Dosis",sans-serif; font-size:13px;
+      padding:5px 7px; font-family:"Dosis",sans-serif; font-size:14px;
     }
     #mentorRoot textarea { width:100%; min-height:60px; resize:vertical; }
-    #mentorRoot label.cb { display:inline-flex; align-items:center; gap:5px; margin:3px 12px 3px 0; font-size:13px; cursor:pointer; }
+    #mentorRoot label.cb { display:inline-flex; align-items:center; gap:5px; margin:3px 12px 3px 0; font-size:14px; cursor:pointer; }
 
     /* Tabellen */
     #mentorRoot table.mtab {
-      width:100% !important; border-collapse:collapse !important; font-size:13px;
+      width:100% !important; border-collapse:collapse !important; font-size:14px;
       margin-top:6px; table-layout:auto !important; color:var(--text);
     }
     #mentorRoot table.mtab th {
@@ -737,7 +753,8 @@
     messageReviewIds: [],    // Reviews, die in der aktuellen Nachricht enthalten sind
     browseResults: null,     // Ergebnisliste der manuellen Suche (oder null)
     textsOpen: false,        // Textbausteine-Panel in Einstellungen aufgeklappt?
-    statsOpen: {}            // ausgeklappte Schuetzlinge in der Statistik {id:true}
+    statsOpen: {},           // ausgeklappte Schuetzlinge in der Statistik {id:true}
+    compareResult: null      // Ergebnis des Schuetzlings-Abgleichs (Array oder null)
   };
 
   function buildShell() {
@@ -828,6 +845,45 @@
     if (!isNew) html += ' <button class="mbtn ghost" id="pgCancel">Abbrechen</button>';
     html += '</div></div>';
 
+    // ----- Massen-Import (mehrere Nicks auf einmal) -----
+    html += '<div class="mwrap"><h4>📋 Mehrere Schützlinge auf einmal anlegen</h4>';
+    html += '<div class="muted" style="margin-bottom:6px">Nicknames mit Komma getrennt eingeben. Für jeden wird ein Schützling angelegt (Meldesystem-Suche wird automatisch erzeugt). ' +
+      'Datum und Meldetypen unten gelten für alle. Bereits vorhandene bleiben erhalten – bei ihnen wird höchstens das Datum aktualisiert.</div>';
+    html += '<textarea id="bulkNicks" placeholder="z. B.: MaxMuster, LisaTest, EinUser, NochEiner" style="min-height:70px"></textarea>';
+    html += '<div class="row-flex" style="margin-top:8px"><div>Kontrolle ab Datum: <input type="text" id="bulkFrom" style="width:140px" placeholder="TT.MM.JJJJ"></div></div>';
+    html += '<div class="typebox" style="margin-top:8px"><b>Meldetypen für alle</b> <span class="muted">(RwV immer automatisch)</span><br>';
+    REPORT_CATEGORIES.forEach(c => {
+      html += '<label class="cb"><input type="checkbox" class="bulkType" value="' + c.key + '"> ' + esc(c.label) + '</label>';
+    });
+    html += '</div>';
+    html += '<div style="margin-top:8px"><button class="mbtn" id="bulkCreate">➕ Alle anlegen</button></div></div>';
+
+    // ----- Abgleich (welche Schützlinge sind NICHT in der Liste?) -----
+    html += '<div class="mwrap"><h4>🔄 Abgleich mit aktueller Liste</h4>';
+    html += '<div class="muted" style="margin-bottom:6px">Aktuelle Nicks mit Komma getrennt eingeben. Angezeigt werden die vorhandenen Schützlinge, die <b>nicht</b> in deiner Liste stehen – z. B. weil sie nicht mehr kontrolliert werden müssen.</div>';
+    html += '<textarea id="cmpNicks" placeholder="z. B.: MaxMuster, LisaTest, EinUser" style="min-height:60px"></textarea>';
+    html += '<div style="margin-top:8px"><button class="mbtn ghost" id="cmpRun">🔍 Abgleichen</button></div>';
+    if (state.compareResult) {
+      const miss = state.compareResult;
+      html += '<div style="margin-top:10px">';
+      if (!miss.length) {
+        html += '<div class="muted">Alle vorhandenen Schützlinge sind in deiner Liste enthalten. 👍</div>';
+      } else {
+        html += '<b>' + miss.length + ' nicht in deiner Liste:</b>';
+        html += '<table class="mtab" style="margin-top:6px"><tr><th>Nick</th><th>Gesichtet</th><th>Aktion</th></tr>';
+        miss.forEach(pr => {
+          const revs = Store.reviewsFor(pr.id);
+          html += '<tr><td><b>' + esc(pr.nick) + '</b>' + (pr.name ? ' <span class="muted">(' + esc(pr.name) + ')</span>' : '') + '</td>' +
+            '<td>' + revs.length + '</td>' +
+            '<td><button class="mbtn bad cmpDel" data-id="' + pr.id + '">❌ Löschen</button></td></tr>';
+        });
+        html += '</table>';
+        html += '<div style="margin-top:8px"><button class="mbtn bad" id="cmpDelAll">❌ Alle ' + miss.length + ' löschen</button></div>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+
     // Liste
     html += '<h4>Vorhandene Schützlinge (' + Store.proteges.length + ')</h4>';
     if (!Store.proteges.length) {
@@ -900,6 +956,74 @@
       Store.proteges = Store.proteges.filter(x => x.id !== pr.id);
       Store.reviews = Store.reviews.filter(r => r.protegeId !== pr.id);
       Store.save(); toast('Gelöscht.'); render();
+    });
+
+    // ---- Massen-Import ----
+    $('#bulkCreate').on('click', function () {
+      const nicks = parseNickList($('#bulkNicks').val());
+      if (!nicks.length) { toast('Bitte mindestens einen Nickname eingeben.'); return; }
+      const from = $('#bulkFrom').val().trim();
+      if (from && !parseDateInput(from)) { toast('Datum bitte als TT.MM.JJJJ angeben.'); return; }
+      const types = $('.bulkType:checked').map(function () { return $(this).val(); }).get();
+
+      let created = 0, updated = 0, untouched = 0;
+      nicks.forEach(nick => {
+        const existing = findProtegeByNick(nick);
+        if (existing) {
+          // Vorhandene bleiben erhalten; hoechstens das Datum aktualisieren
+          if (from) { existing.searchFrom = from; updated++; }
+          else untouched++;
+        } else {
+          const ms = buildSearchUrl(nick, 0)
+            .replace('&involvementtype=0', '&involvementtype=3')
+            .replace('&state=0', '&state=2');
+          Store.proteges.push(new Protege({
+            nick, name: '', meldesystemLink: ms, forumLink: '',
+            reportTypes: types.slice(), searchFrom: from
+          }));
+          created++;
+        }
+      });
+      Store.save();
+      let msg = created + ' neu angelegt';
+      if (updated) msg += ', ' + updated + ' Datum aktualisiert';
+      if (untouched) msg += ', ' + untouched + ' unverändert';
+      toast(msg + '.');
+      render();
+    });
+
+    // ---- Abgleich ----
+    $('#cmpRun').on('click', function () {
+      const list = parseNickList($('#cmpNicks').val());
+      if (!list.length) { toast('Bitte eine Vergleichsliste eingeben.'); return; }
+      const inList = new Set(list.map(normalizeNick));
+      state.compareResult = Store.proteges.filter(pr => !inList.has(normalizeNick(pr.nick)));
+      if (!state.compareResult.length) toast('Alle vorhandenen Schützlinge sind in deiner Liste enthalten.');
+      else toast(state.compareResult.length + ' Schützling(e) nicht in deiner Liste.');
+      render();
+    });
+
+    $('.cmpDel').on('click', function () {
+      const pr = Store.protege($(this).data('id'));
+      if (!pr) return;
+      if (!confirm('Schützling "' + pr.nick + '" inkl. aller Sichtungen wirklich löschen?')) return;
+      Store.proteges = Store.proteges.filter(x => x.id !== pr.id);
+      Store.reviews = Store.reviews.filter(r => r.protegeId !== pr.id);
+      Store.clearQueueFor(pr.id);
+      if (state.compareResult) state.compareResult = state.compareResult.filter(x => x.id !== pr.id);
+      Store.save(); toast('Gelöscht.'); render();
+    });
+
+    $('#cmpDelAll').on('click', function () {
+      const miss = state.compareResult || [];
+      if (!miss.length) return;
+      if (!confirm(miss.length + ' Schützling(e) inkl. aller Sichtungen wirklich löschen?')) return;
+      const ids = new Set(miss.map(p => p.id));
+      Store.proteges = Store.proteges.filter(x => !ids.has(x.id));
+      Store.reviews = Store.reviews.filter(r => !ids.has(r.protegeId));
+      Store.queue = Store.queue.filter(q => !ids.has(q.protegeId));
+      state.compareResult = null;
+      Store.save(); toast(ids.size + ' gelöscht.'); render();
     });
   }
 
@@ -1586,4 +1710,4 @@
   } else {
     init();
   }
-})(); 
+})();
