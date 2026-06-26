@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.10
+// @version      1.11
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -36,18 +36,24 @@
   // Es werden bewusst ASCII-Praefixe verwendet, damit Umlaut-Encoding keine Rolle spielt.
   // RwV-Typen werden grundsaetzlich IMMER beruecksichtigt (siehe typeMatches()).
   const REPORT_CATEGORIES = [
-    // ANNAHME: "Allgemeines" mappe ich auf die allgemeine "Aussage melden" + "Fotokommentar".
-    // Falls bei euch ein anderer Typ-Text dahintersteht, hier einfach anpassen.
-    { key: 'allgemeines',   label: 'Allgemeines',                       match: t => t === 'Aussage melden' || t.startsWith('Fotokommentar') },
-    { key: 'aussage',       label: 'Aussage melden',                    match: t => t === 'Aussage melden' },
-    { key: 'profilbilder',  label: 'Profil- oder Albenbilder melden',   match: t => t.startsWith('Profilbilder melden') },
-    { key: 'profilinhalt',  label: 'Profilinhalt oder Nickname melden', match: t => t.startsWith('Profilinhalt oder Nickname melden') },
-    { key: 'extrem',        label: 'Extremistische Aussage melden',     match: t => t.startsWith('Extremistische Aussage') },
-    { key: 'jugend',        label: 'Jugendgefährdende Aussage melden',  match: t => t.startsWith('Jugendgef') },
-    { key: 'altergeschl',   label: 'Alters- / Geschlechtsangabe melden',match: t => t.startsWith('Alter / Geschlecht') },
-    { key: 'sexbel',        label: 'Sexuelle Belästigung melden',       match: t => t.startsWith('Sexuelle Bel') },
-    { key: 'spiel',         label: 'Spielverhalten melden',             match: t => t.startsWith('Spielverhalten') },
-    { key: 'suizid',        label: 'Suizid-/Amokankündigung melden',    match: t => t.startsWith('Suizid') }
+    // Die match()-Funktion entscheidet, ob ein Typ-Text einer Meldung zu diesem
+    // Eintrag gehoert. Die Texte stammen aus dem Knuddels-Meldesystem. Fuer die
+    // neueren Typen (Fotomeet, Fotokommentar, MyChannel/Globale App) ist der
+    // genaue Seitentext eine Annahme - falls dort etwas anderes steht, hier
+    // einfach die match()-Bedingung anpassen.
+    { key: 'aussage',       label: 'Aussage melden',                       match: t => t === 'Aussage melden' },
+    { key: 'extrem',        label: 'Extremistische Aussage melden',        match: t => t.startsWith('Extremistische Aussage') },
+    { key: 'sexbel',        label: 'Sexuelle Belästigung melden',          match: t => t.startsWith('Sexuelle Bel') },
+    { key: 'jugend',        label: 'Jugendgefährdende Aussage melden',     match: t => t.startsWith('Jugendgef') },
+    { key: 'altergeschl',   label: 'Alter / Geschlecht melden',            match: t => t.startsWith('Alter / Geschlecht') },
+    { key: 'suizid',        label: 'Suizid-/Amokankündigung melden',       match: t => t.startsWith('Suizid') },
+    { key: 'spiel',         label: 'Spielverhalten melden',                match: t => t.startsWith('Spielverhalten') },
+    // "Profilbilder melden" exakt, damit es NICHT auch die Fotomeet-Variante faengt
+    { key: 'profilbilder',  label: 'Profilbilder melden',                  match: t => t === 'Profilbilder melden' },
+    { key: 'fotomeet',      label: 'Profilbilder melden (Fotomeet)',       match: t => /Profilbilder melden/.test(t) && /Fotomeet/i.test(t) },
+    { key: 'profilinhalt',  label: 'Profilinhalt oder Nickname melden',    match: t => t.startsWith('Profilinhalt oder Nickname') },
+    { key: 'fotokommentar', label: 'Fotokommentar melden',                 match: t => t.startsWith('Fotokommentar') },
+    { key: 'mychannel',     label: 'MyChannel / Globale App melden',       match: t => t.startsWith('MyChannel') || /Globale App/i.test(t) }
   ];
 
   // Rollen-Vorauswahl fuer Meldetypen. Bei Auswahl einer Rolle werden GENAU die
@@ -57,15 +63,15 @@
     { key: 'standard', label: 'Standard (alle Meldetypen)',
       types: REPORT_CATEGORIES.map(c => c.key) },
     { key: 'admin', label: 'Admin',
-      types: ['allgemeines', 'aussage', 'profilinhalt', 'sexbel', 'spiel', 'suizid'] },
+      types: ['aussage', 'sexbel', 'suizid', 'spiel', 'profilinhalt'] },
     { key: 'profilteam', label: 'Profil-Team',
-      types: ['allgemeines', 'profilbilder', 'profilinhalt', 'altergeschl'] },
+      types: ['altergeschl', 'profilbilder', 'fotomeet', 'profilinhalt', 'fotokommentar'] },
     { key: 'juschu', label: 'JuSchu-Team',
-      types: ['allgemeines', 'aussage', 'profilinhalt', 'jugend', 'sexbel'] },
+      types: ['aussage', 'sexbel', 'jugend', 'profilinhalt'] },
     { key: 'aeteam', label: 'AE-Team',
-      types: ['allgemeines', 'aussage', 'extrem'] },
+      types: ['extrem'] },
     { key: 'cm', label: 'CM',
-      types: ['allgemeines', 'aussage', 'sexbel'] }
+      types: ['aussage', 'sexbel', 'spiel'] }
   ];
 
   // Standard-Textbausteine der Mentoren-Nachricht. Diese koennen vom Nutzer in den
