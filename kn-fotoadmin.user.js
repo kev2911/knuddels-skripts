@@ -7,6 +7,8 @@
 // @match        https://photo.knuddels.de/photos-admin*
 // @match        https://photo.knuddels.de/photos-profile*
 // @icon         https://photo.knuddels.de/favicon-de.ico
+// @updateURL    https://github.com/kev2911/knuddels-skripts/raw/refs/heads/main/kn-fotoadmin.user.js
+// @downloadURL  https://github.com/kev2911/knuddels-skripts/raw/refs/heads/main/kn-fotoadmin.user.js
 // @require      https://code.jquery.com/jquery-3.7.1.min.js
 // @grant        GM_getValue
 // @grant        GM_setValue
