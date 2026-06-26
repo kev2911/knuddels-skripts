@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.04
+// @version      1.05
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -1550,6 +1550,16 @@
       html += '</table>';
     }
 
+    // Reset-Bereich (nur wenn es überhaupt Auswertungen gibt)
+    if (total) {
+      html += '<div class="mwrap" style="margin-top:16px;border-color:#c0392b">' +
+        '<h4 style="margin-top:0">🗑️ Statistik zurücksetzen</h4>' +
+        '<div class="muted" style="margin-bottom:8px">Löscht alle ' + total + ' Auswertungen unwiderruflich und beginnt bei Null. ' +
+        'Die Schützlinge selbst bleiben erhalten.</div>' +
+        '<button class="mbtn bad" id="statsResetAll">🗑️ Gesamte Statistik zurücksetzen</button>' +
+        '</div>';
+    }
+
     $body.html(html);
     bindStatsEvents();
   }
@@ -1565,7 +1575,7 @@
     });
 
     let h = '<div style="padding:8px 4px 12px">';
-    h += '<table class="mtab" style="margin-top:0"><tr><th>Bewertung</th><th>Meldung</th><th>Typ</th><th>Kommentar</th><th>Versand</th></tr>';
+    h += '<table class="mtab" style="margin-top:0"><tr><th>Bewertung</th><th>Meldung</th><th>Typ</th><th>Kommentar</th><th>Versand</th><th></th></tr>';
     sorted.forEach(r => {
       const badge = r.rating === 'notok'
         ? '<span class="pill red">✗ nicht in Ordnung</span>'
@@ -1578,6 +1588,7 @@
         '<td>' + esc(r.typeText || '') + '</td>' +
         '<td>' + (r.comment ? esc(r.comment) : '<span class="muted">–</span>') + '</td>' +
         '<td style="white-space:nowrap">' + sent + '</td>' +
+        '<td style="white-space:nowrap;text-align:center"><button class="mbtn bad statsDelOne" data-id="' + r.id + '" title="Diese Auswertung löschen">❌</button></td>' +
         '</tr>';
     });
     h += '</table></div>';
@@ -1589,6 +1600,31 @@
       const id = $(this).data('id');
       if (!Store.reviewsFor(id).length) return; // nichts zum Aufklappen
       state.statsOpen[id] = !state.statsOpen[id];
+      render();
+    });
+
+    // Einzelne Auswertung löschen (Klick darf die Zeile nicht auf-/zuklappen)
+    $('.statsDelOne').on('click', function (e) {
+      e.stopPropagation();
+      const id = $(this).data('id');
+      const r = Store.reviews.find(x => x.id === id);
+      if (!r) return;
+      if (!confirm('Diese Auswertung zu ' + (r.reportNumber || r.reportId) + ' wirklich aus der Statistik löschen?')) return;
+      Store.reviews = Store.reviews.filter(x => x.id !== id);
+      Store.save();
+      toast('Auswertung gelöscht.');
+      render();
+    });
+
+    // Gesamte Statistik zurücksetzen
+    $('#statsResetAll').on('click', function () {
+      const count = Store.reviews.length;
+      if (!count) return;
+      if (!confirm('Wirklich ALLE ' + count + ' Auswertungen löschen und die Statistik auf Null setzen?\n\nDie Schützlinge bleiben erhalten. Dieser Schritt kann nicht rückgängig gemacht werden.')) return;
+      Store.reviews = [];
+      Store.save();
+      state.statsOpen = {};
+      toast('Statistik wurde zurückgesetzt.');
       render();
     });
   }
