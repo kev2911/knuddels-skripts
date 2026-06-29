@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.16
+// @version      1.17
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -1560,29 +1560,24 @@
     return 'https://admincalls-de.knuddels.de/ac/ac_viewcase.pl?domain=knuddels.de&id=' + reportId;
   }
 
-  // Erzeugt den Forum-Text, gruppiert nach Bewertung: erst die Beanstandungen
-  // (nicht in Ordnung), dann die in Ordnung. Jede Gruppe mit Ueberschrift; die
-  // Melde-ID fett und klickbar verlinkt (Basic-BBCode), darunter der Kommentar,
-  // dazwischen eine Leerzeile als Absatz. Meldungen ohne Bewertung werden
-  // ausgelassen.
+  // Erzeugt den Forum-Text (Variante "Farb-Markierung pro Zeile").
+  // Sortiert: erst die Beanstandungen (nicht in Ordnung), dann die in Ordnung.
+  // Jede Meldung: farbige Bewertungs-Markierung + fett verlinkte Melde-ID,
+  // darunter der Kommentar. Wurde KEIN Kommentar geschrieben, bleibt die
+  // Beschreibung leer (kein Platzhalter). Eintraege durch Leerzeile getrennt.
   function buildForumText(results, texts, ratings) {
-    const PLACEHOLDER = 'Hier kommt eine Beschreibung zur Meldebearbeitung rein.';
     const entry = row => {
       const label = row.reportNumber || row.reportId;
-      const t = (texts[row.reportId] || '').trim() || PLACEHOLDER;
-      return '[b][url=' + forumViewcaseUrl(row.reportId) + ']' + label + '[/url][/b]\n' + t;
+      const marker = ratings[row.reportId] === 'notok'
+        ? '[color=red][b]✗ Beanstandung[/b][/color]'
+        : '[color=green][b]✓ In Ordnung[/b][/color]';
+      const head = marker + ' [b][url=' + forumViewcaseUrl(row.reportId) + ']' + label + '[/url][/b]';
+      const t = (texts[row.reportId] || '').trim();
+      return t ? head + '\n' + t : head; // leerer Text -> nur die Kopfzeile
     };
     const beanstandung = results.filter(r => ratings[r.reportId] === 'notok');
     const inOrdnung = results.filter(r => ratings[r.reportId] === 'ok');
-
-    const blocks = [];
-    if (beanstandung.length) {
-      blocks.push('[b]== Beanstandungen ==[/b]\n\n' + beanstandung.map(entry).join('\n\n'));
-    }
-    if (inOrdnung.length) {
-      blocks.push('[b]== In Ordnung ==[/b]\n\n' + inOrdnung.map(entry).join('\n\n'));
-    }
-    return blocks.join('\n\n\n');
+    return beanstandung.concat(inOrdnung).map(entry).join('\n\n');
   }
 
   function renderInternalControl($body) {
@@ -1655,7 +1650,7 @@
           html += '<button class="mbtn ok icRate' + (rating === 'ok' ? ' sel' : '') + '" data-id="' + esc(row.reportId) + '" data-r="ok">✅ In Ordnung</button>';
           html += '<button class="mbtn bad icRate' + (rating === 'notok' ? ' sel' : '') + '" data-id="' + esc(row.reportId) + '" data-r="notok">❌ Nicht in Ordnung</button>';
           html += '</div>';
-          html += '<textarea class="icText" data-id="' + esc(row.reportId) + '" style="margin-top:8px;min-height:70px" placeholder="Begründung / Kommentar (bei „Nicht in Ordnung" Pflicht, bei „In Ordnung" optional)">' + esc(ic.texts[row.reportId] || '') + '</textarea>';
+          html += '<textarea class="icText" data-id="' + esc(row.reportId) + '" style="margin-top:8px;min-height:70px" placeholder="Begründung / Kommentar (optional – erscheint im Forum unter der Meldung; leer = bleibt leer)">' + esc(ic.texts[row.reportId] || '') + '</textarea>';
           html += '</div>';
         });
         html += '<div style="margin-top:8px"><button class="mbtn" id="icGenForum">📝 Forum-Text generieren</button></div>';
@@ -1779,12 +1774,6 @@
 
     $('#icGenForum').on('click', function () {
       readInternalTexts();
-      // Gleiche Logik wie in der normalen Kontrolle: Beanstandung braucht eine Begründung.
-      const missing = ic.results.filter(r => ic.ratings[r.reportId] === 'notok' && !((ic.texts[r.reportId] || '').trim()));
-      if (missing.length) {
-        toast('Bei Beanstandungen bitte eine Begründung schreiben (' + missing.length + ' offen).');
-        return;
-      }
       const rated = ic.results.filter(r => ic.ratings[r.reportId] === 'ok' || ic.ratings[r.reportId] === 'notok');
       if (!rated.length) { toast('Bitte mindestens eine Meldung bewerten.'); return; }
       const unrated = ic.results.length - rated.length;
