@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.15
+// @version      1.16
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -1547,7 +1547,7 @@
   function openInternal() {
     state.internal = {
       nick: '', name: '', msLink: '', from: '', types: [], role: '',
-      mode: 'rated', count: 10, results: null, texts: {}, forumText: null,
+      mode: 'rated', count: 10, results: null, texts: {}, ratings: {}, forumText: null,
       loading: false, loadingText: ''
     };
     render();
@@ -1560,22 +1560,29 @@
     return 'https://admincalls-de.knuddels.de/ac/ac_viewcase.pl?domain=knuddels.de&id=' + reportId;
   }
 
-  // Erzeugt den Forum-Text. Die Melde-ID ist fett und klickbar verlinkt
-  // (Basic-BBCode, funktioniert auch im alten Forum), darunter der Kontroll-Text,
-  // und zwischen den Eintraegen eine Leerzeile als Absatz:
-  //
-  //   [b][url=...]*1.419.392.039[/url][/b]
-  //   Beschreibung ...
-  //
-  //   [b][url=...]*1.419.303.960[/url][/b]
-  //   Beschreibung ...
-  function buildForumText(results, texts) {
+  // Erzeugt den Forum-Text, gruppiert nach Bewertung: erst die Beanstandungen
+  // (nicht in Ordnung), dann die in Ordnung. Jede Gruppe mit Ueberschrift; die
+  // Melde-ID fett und klickbar verlinkt (Basic-BBCode), darunter der Kommentar,
+  // dazwischen eine Leerzeile als Absatz. Meldungen ohne Bewertung werden
+  // ausgelassen.
+  function buildForumText(results, texts, ratings) {
     const PLACEHOLDER = 'Hier kommt eine Beschreibung zur Meldebearbeitung rein.';
-    return results.map(row => {
+    const entry = row => {
       const label = row.reportNumber || row.reportId;
       const t = (texts[row.reportId] || '').trim() || PLACEHOLDER;
       return '[b][url=' + forumViewcaseUrl(row.reportId) + ']' + label + '[/url][/b]\n' + t;
-    }).join('\n\n');
+    };
+    const beanstandung = results.filter(r => ratings[r.reportId] === 'notok');
+    const inOrdnung = results.filter(r => ratings[r.reportId] === 'ok');
+
+    const blocks = [];
+    if (beanstandung.length) {
+      blocks.push('[b]== Beanstandungen ==[/b]\n\n' + beanstandung.map(entry).join('\n\n'));
+    }
+    if (inOrdnung.length) {
+      blocks.push('[b]== In Ordnung ==[/b]\n\n' + inOrdnung.map(entry).join('\n\n'));
+    }
+    return blocks.join('\n\n\n');
   }
 
   function renderInternalControl($body) {
@@ -1634,14 +1641,21 @@
       if (!ic.results.length) {
         html += '<div class="muted">Keine passenden Meldungen gefunden. Prüfe Nickname, Datum, Meldetypen und den Weiterleitungs-Modus.</div>';
       } else {
-        html += '<div class="muted" style="margin-bottom:6px">Schreibe pro Meldung deinen Kontroll-Text. „👁 Vorschau" zeigt die Meldung direkt an.</div>';
+        html += '<div class="muted" style="margin-bottom:6px">Bewerte jede Meldung mit „In Ordnung" oder „Nicht in Ordnung" und schreibe bei Bedarf einen Text. „👁 Vorschau" zeigt die Meldung direkt an. Die Ausgabe wird nach Beanstandungen / in Ordnung sortiert.</div>';
         ic.results.forEach((row) => {
+          const rating = ic.ratings[row.reportId] || '';
           html += '<div class="mwrap" style="margin:8px 0">';
           html += '<div class="row-flex"><div class="grow"><a href="' + viewcaseUrl(row.reportId) + '" target="_blank">' + esc(row.reportNumber || row.reportId) + '</a> ' +
-            '<span class="muted">' + esc(row.typeText || '') + (row.date ? ' • ' + esc(row.date) : '') + '</span></div>' +
+            '<span class="muted">' + esc(row.typeText || '') + (row.date ? ' • ' + esc(row.date) : '') + '</span>' +
+            (rating ? ' <span class="pill ' + (rating === 'notok' ? 'red' : 'green') + '">' + (rating === 'notok' ? 'Beanstandung' : 'In Ordnung') + '</span>' : '') +
+            '</div>' +
             '<button class="mbtn ghost icPreview" data-id="' + esc(row.reportId) + '">👁 Vorschau</button></div>';
           html += '<div class="icPreviewBox" data-id="' + esc(row.reportId) + '"></div>';
-          html += '<textarea class="icText" data-id="' + esc(row.reportId) + '" style="margin-top:6px;min-height:70px" placeholder="Dein Kontroll-Text zu dieser Meldung ...">' + esc(ic.texts[row.reportId] || '') + '</textarea>';
+          html += '<div class="row-flex" style="margin-top:8px">';
+          html += '<button class="mbtn ok icRate' + (rating === 'ok' ? ' sel' : '') + '" data-id="' + esc(row.reportId) + '" data-r="ok">✅ In Ordnung</button>';
+          html += '<button class="mbtn bad icRate' + (rating === 'notok' ? ' sel' : '') + '" data-id="' + esc(row.reportId) + '" data-r="notok">❌ Nicht in Ordnung</button>';
+          html += '</div>';
+          html += '<textarea class="icText" data-id="' + esc(row.reportId) + '" style="margin-top:8px;min-height:70px" placeholder="Begründung / Kommentar (bei „Nicht in Ordnung" Pflicht, bei „In Ordnung" optional)">' + esc(ic.texts[row.reportId] || '') + '</textarea>';
           html += '</div>';
         });
         html += '<div style="margin-top:8px"><button class="mbtn" id="icGenForum">📝 Forum-Text generieren</button></div>';
@@ -1704,7 +1718,7 @@
 
     $('#icClear').on('click', function () {
       readInternalForm();
-      ic.results = null; ic.forumText = null; ic.texts = {};
+      ic.results = null; ic.forumText = null; ic.texts = {}; ic.ratings = {};
       render();
     });
 
@@ -1723,6 +1737,7 @@
       });
 
       ic.loading = true; ic.loadingText = 'Starte Suche ...'; ic.results = null; ic.forumText = null;
+      ic.texts = {}; ic.ratings = {};
       render();
       try {
         const result = await loadRandomReports(tmp, n, txt => {
@@ -1752,10 +1767,30 @@
       ic.texts[$(this).data('id')] = $(this).val();
     });
 
+    // Bewertung setzen (ohne Re-Render, damit Texte erhalten bleiben)
+    $('.icRate').on('click', function () {
+      const id = $(this).data('id');
+      const r = $(this).data('r');
+      ic.ratings[id] = r;
+      // Buttons dieser Meldung umschalten
+      $('.icRate[data-id="' + id + '"]').removeClass('sel');
+      $(this).addClass('sel');
+    });
+
     $('#icGenForum').on('click', function () {
       readInternalTexts();
-      ic.forumText = buildForumText(ic.results, ic.texts);
+      // Gleiche Logik wie in der normalen Kontrolle: Beanstandung braucht eine Begründung.
+      const missing = ic.results.filter(r => ic.ratings[r.reportId] === 'notok' && !((ic.texts[r.reportId] || '').trim()));
+      if (missing.length) {
+        toast('Bei Beanstandungen bitte eine Begründung schreiben (' + missing.length + ' offen).');
+        return;
+      }
+      const rated = ic.results.filter(r => ic.ratings[r.reportId] === 'ok' || ic.ratings[r.reportId] === 'notok');
+      if (!rated.length) { toast('Bitte mindestens eine Meldung bewerten.'); return; }
+      const unrated = ic.results.length - rated.length;
+      ic.forumText = buildForumText(ic.results, ic.texts, ic.ratings);
       render();
+      if (unrated > 0) toast(unrated + ' unbewertete Meldung(en) wurden nicht übernommen.');
     });
 
     $('#icCopyForum').on('click', function () {
