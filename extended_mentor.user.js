@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.17
+// @version      1.18
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -1560,24 +1560,28 @@
     return 'https://admincalls-de.knuddels.de/ac/ac_viewcase.pl?domain=knuddels.de&id=' + reportId;
   }
 
-  // Erzeugt den Forum-Text (Variante "Farb-Markierung pro Zeile").
-  // Sortiert: erst die Beanstandungen (nicht in Ordnung), dann die in Ordnung.
-  // Jede Meldung: farbige Bewertungs-Markierung + fett verlinkte Melde-ID,
-  // darunter der Kommentar. Wurde KEIN Kommentar geschrieben, bleibt die
-  // Beschreibung leer (kein Platzhalter). Eintraege durch Leerzeile getrennt.
+  // Erzeugt den Forum-Text: je eine farbige Gruppen-Ueberschrift fuer
+  // Beanstandungen und in Ordnung, darunter die Meldungen schlicht (fett
+  // verlinkte Melde-ID + Kommentar). Wurde KEIN Kommentar geschrieben, bleibt
+  // die Beschreibung leer (kein Platzhalter). Eintraege durch Leerzeile getrennt.
   function buildForumText(results, texts, ratings) {
     const entry = row => {
       const label = row.reportNumber || row.reportId;
-      const marker = ratings[row.reportId] === 'notok'
-        ? '[color=red][b]✗ Beanstandung[/b][/color]'
-        : '[color=green][b]✓ In Ordnung[/b][/color]';
-      const head = marker + ' [b][url=' + forumViewcaseUrl(row.reportId) + ']' + label + '[/url][/b]';
+      const head = '[b][url=' + forumViewcaseUrl(row.reportId) + ']' + label + '[/url][/b]';
       const t = (texts[row.reportId] || '').trim();
-      return t ? head + '\n' + t : head; // leerer Text -> nur die Kopfzeile
+      return t ? head + '\n' + t : head; // leerer Text -> nur die Melde-ID
     };
     const beanstandung = results.filter(r => ratings[r.reportId] === 'notok');
     const inOrdnung = results.filter(r => ratings[r.reportId] === 'ok');
-    return beanstandung.concat(inOrdnung).map(entry).join('\n\n');
+
+    const blocks = [];
+    if (beanstandung.length) {
+      blocks.push('[color=red][b]✗ Beanstandungen[/b][/color]\n\n' + beanstandung.map(entry).join('\n\n'));
+    }
+    if (inOrdnung.length) {
+      blocks.push('[color=green][b]✓ In Ordnung[/b][/color]\n\n' + inOrdnung.map(entry).join('\n\n'));
+    }
+    return blocks.join('\n\n\n');
   }
 
   function renderInternalControl($body) {
