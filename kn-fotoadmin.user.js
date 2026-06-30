@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.03
+// @version      1.04
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1424,6 +1424,11 @@ const chrome = {
             $li.find('.userimage').each(function () {
                 const $img = $(this);
                 if ($img.is($mainImg)) return;
+                // Bilder, die die Originalseite selbst ausblendet, NICHT anzeigen
+                // (z. B. die alte „old_photo"-Spalte in der Einzel-Profiladministration).
+                if ($img.is(':hidden')) return;
+                const cs = window.getComputedStyle ? window.getComputedStyle(this) : null;
+                if (cs && (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) === 0)) return;
                 const sig = ($img.attr('src') || '') + ' ' + ($img.attr('alt') || '');
                 const isPro = /-pro/i.test(sig);
                 const isVer = /-ver/i.test(sig);
