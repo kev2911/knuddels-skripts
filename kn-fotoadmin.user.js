@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         kn-fotoadmin
+// @name         Extended Foto
 // @namespace    https://photo.knuddels.de/
-// @version      1.04
+// @version      1.05
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
