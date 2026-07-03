@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.18
+// @version      1.19
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -112,7 +112,23 @@
     });
   }
 
-  function enc(v) { return encodeURIComponent(String(v)).replace(/%20/g, '+'); }
+  // URL-Kodierung fuer die Knuddels-Suche. Das Meldesystem arbeitet mit
+  // iso-8859-1 (Latin-1), NICHT mit UTF-8. encodeURIComponent wuerde z.B. aus
+  // "ä" die UTF-8-Bytes %C3%A4 machen -> im Meldesystem als "Ã¤" verfaelscht.
+  // Daher hier Latin-1: ein Byte pro Zeichen (ä -> %E4). Leerzeichen -> '+'.
+  function enc(v) {
+    const s = String(v);
+    let out = '';
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      const code = s.charCodeAt(i);
+      if (/[A-Za-z0-9\-_.!~*'()]/.test(ch)) out += ch;
+      else if (ch === ' ') out += '+';
+      else if (code <= 0xFF) out += '%' + code.toString(16).toUpperCase().padStart(2, '0');
+      else out += encodeURIComponent(ch); // ausserhalb Latin-1 (z.B. Emoji): UTF-8-Fallback
+    }
+    return out;
+  }
 
   function normalizeNick(n) { return (n || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 
