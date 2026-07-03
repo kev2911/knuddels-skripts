@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.03
+// @version      1.04
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1701,7 +1701,7 @@ const chrome = {
 
             $head.append($meta);
             $head.append($('<div class="epa-album-spacer"></div>'));
-            $head.append(NewLayout.memberActions(nick));
+            $head.append(NewLayout.memberActions(nick, NewLayout.adminButton($ul)));
             $section.append($head);
 
             // Fotos nebeneinander, Bewertung je Bild
@@ -1719,7 +1719,7 @@ const chrome = {
         }
 
         // Bot/Scam/Melden – einmal pro Mitglied (Nutzer-Ebene)
-        static memberActions(nick) {
+        static memberActions(nick, $admBtn) {
             const $row = $('<div class="epa-album-actions"></div>');
             const $bot = $('<button type="button" class="epa-btn epa-btn-bot">Bot</button>');
             const $scam = $('<button type="button" class="epa-btn epa-btn-scam">Scam</button>');
@@ -1727,6 +1727,7 @@ const chrome = {
             $scam.on('click', function () { NewLayout.macro('scam', nick, null, $scam); });
             $row.append($bot, $scam);
             if (nick) $row.append(NewLayout.reportButton(nick));
+            if ($admBtn) $row.append($admBtn);   // Administration ganz rechts außen, neben „Melden"
             return $row;
         }
 
@@ -2250,6 +2251,42 @@ const chrome = {
             };
         }
 
+        // Button „Administration" → Administrationsseite des Mitglieds. Nutzt den nativen
+        // Link (Foto-/Verify-Kontrolle) oder leitet die ID aus einem Albumbild-Link ab (Album).
+        // Mitglieds-ID aus einer Bild-URL im Bereich ableiten: kde/<hash>/<ID>-(pro|ver|alb)…
+        static memberIdFromScope($scope) {
+            const urls = [];
+            $scope.find('a[href], img[src]').each(function () {
+                const $e = $(this);
+                const h = $e.attr('href'); if (h) urls.push(h);
+                const s = $e.attr('src'); if (s) urls.push(s);
+                const d = $e.attr('data-large'); if (d) urls.push(d);
+            });
+            for (let i = 0; i < urls.length; i++) {
+                const m = (urls[i] || '').match(/\/([^/]+)-(?:pro|ver|alb)\d/i);
+                if (m && m[1]) return m[1];
+            }
+            return null;
+        }
+
+        // Button „Administration" → Administrationsseite des Mitglieds.
+        // Verify hat den Link nativ; bei Foto-/Albenkontrolle wird die URL selbst gebaut
+        // (Mitglieds-ID aus dem Bild-Dateinamen).
+        static adminButton($scope) {
+            let href = null;
+            const $adm = $scope.find('a').filter(function () {
+                const h = ($(this).attr('href') || '').replace(/\s+/g, '');
+                return /photos-admin-profile\.html/i.test(h) && /[?&]id=/i.test(h);
+            }).first();
+            if ($adm.length) href = ($adm.attr('href') || '').replace(/\s+/g, '');
+            if (!href) {
+                const id = NewLayout.memberIdFromScope($scope);
+                if (id) href = 'photos-admin-profile.html?id=' + id;
+            }
+            if (!href) return null;
+            return $('<a class="epa-btn epa-btn-admin" target="_blank" rel="noopener">Administration</a>').attr('href', href);
+        }
+
         static toolsBlock($scope, $select, nick) {
             const $block = $('<div class="epa-block"></div>');
             $block.append($('<div class="epa-block-label">1 \u00b7 Prüfen</div>'));
@@ -2272,6 +2309,9 @@ const chrome = {
             $scam.on('click', function () { NewLayout.macro('scam', nick, $select, $scam); });
             $btns.append($bot, $scam);
             if (nick) $btns.append(NewLayout.reportButton(nick));
+            // Administration ganz rechts außen, direkt neben „Melden"
+            const $admBtn = NewLayout.adminButton($scope);
+            if ($admBtn) $btns.append($admBtn);
             $block.append($btns);
             return $block;
         }
@@ -2397,6 +2437,8 @@ const chrome = {
                 .epa-btn-bot { border-color:#2563eb; color:#2563eb; }
                 .epa-btn-scam { border-color:#dc2626; color:#dc2626; }
                 .epa-btn-report { border-color:#7c3aed; color:#7c3aed; }
+                .epa-btn-admin { background:#fef2f2; border-color:#f6c9c9; color:#b4423a; font-weight:600; }
+                .epa-btn-admin:hover { background:#fde4e4; border-color:#f0b4b4; }
                 .epa-btn-ok { background:#16a34a !important; border-color:#16a34a !important; color:#fff !important; }
                 .epa-report-hint { display:inline-block; font-size:11px; color:#b91c1c; background:#fee2e2;
                     border:1px solid #fecaca; border-radius:6px; padding:3px 8px; }
