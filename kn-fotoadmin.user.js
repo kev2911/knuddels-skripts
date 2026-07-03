@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.06
+// @version      1.07
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1445,6 +1445,14 @@ const chrome = {
             $row.append($imgs);
 
             $row.append(NewLayout.headNode($info));
+            // Untertitel des Fotos/Albums (falls vorhanden) – bei der Kontrolle wichtig
+            const $rowTitle = $li.find('.album_photo_title').first();
+            const rowTitleText = $rowTitle.length ? ($rowTitle.text() || '').replace(/\s+/g, ' ').trim() : '';
+            if (rowTitleText) {
+                $row.append($('<div class="epa-acard-title"></div>')
+                    .append($('<span class="epa-acard-title-lbl">Untertitel</span>'))
+                    .append($('<span class="epa-acard-title-txt"></span>').text(rowTitleText)));
+            }
             // Verify: vorherige Kontrolle (2. Instanz) + Ablehnungs-Verlauf
             if (page === 'verify') {
                 try {
@@ -1740,6 +1748,14 @@ const chrome = {
             const adminHref = $li.find('a[href*="albumphoto.html?id="]').first().attr('href') || null;
             const $card = $('<div class="epa-acard"></div>');
             $card.append(NewLayout.imageBlock($img, '', true, false, adminHref));
+            // Untertitel des Fotos (falls vorhanden) – bei der Kontrolle wichtig
+            const $title = $li.find('.album_photo_title').first();
+            const titleText = $title.length ? ($title.text() || '').replace(/\s+/g, ' ').trim() : '';
+            if (titleText) {
+                $card.append($('<div class="epa-acard-title"></div>')
+                    .append($('<span class="epa-acard-title-lbl">Untertitel</span>'))
+                    .append($('<span class="epa-acard-title-txt"></span>').text(titleText)));
+            }
             // Bildbezogene Rückwärtssuche pro Foto (nativ, sonst aus Bild-URL aufbauen)
             const $y = $li.find('a').filter(function () { return /yandex/i.test($(this).text()); }).first();
             const $g = $li.find('a').filter(function () { return /google/i.test($(this).text()); }).first();
@@ -2480,6 +2496,14 @@ const chrome = {
                 .epa-acard .epa-img-frame { width:100%; }
                 .epa-acard .epa-img img.epa-uimg { width:100%; height:auto; aspect-ratio:1; object-fit:cover; }
                 .epa-acard-rs { display:flex; gap:6px; }
+                /* Untertitel eines Fotos/Albums */
+                .epa-acard-title { display:flex; flex-direction:column; gap:2px; padding:7px 10px;
+                    border-radius:8px; background:#fffbeb; border:1px solid #fde68a;
+                    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; }
+                .epa-acard-title-lbl { font:700 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+                    letter-spacing:.05em; text-transform:uppercase; color:#b45309; }
+                .epa-acard-title-txt { font-size:13px; color:#78350f; line-height:1.4; word-break:break-word; }
+                .epa-row .epa-acard-title { align-self:flex-start; max-width:520px; }
                 /* Hover-Vorschau (Sichtbarkeit per Inline-Style) */
                 .epa-hover-preview { position:fixed; z-index:2147483600; pointer-events:none;
                     border:3px solid #fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,.4); background:#fff; }
