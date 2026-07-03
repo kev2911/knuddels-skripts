@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.19
+// @version      1.21
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -83,21 +83,23 @@
   //   {mentor} -> eigener Name                                   [signature]
   const DEFAULT_TEXTS = {
     greeting: 'Hallo {name},',
-    intro: 'es war mal wieder Zeit für die routinemäßige Stichprobenkontrolle, dabei ist mir folgendes aufgefallen:',
-    positiveHeader: 'Positiv sind mir folgende Meldungen aufgefallen:',
-    positiveBulk: 'Des Weiteren habe ich {n} weitere {plural} kontrolliert, zu denen ich keine Beanstandungen hatte. Das ist wirklich sehr gut!',
+    introFirst: 'für die erste routinemäßige Stichprobenkontrolle habe ich mir einige deiner bearbeiteten Meldungen angeschaut. Dabei ist mir Folgendes aufgefallen:',
+    introRepeat: 'es war mal wieder Zeit für eine routinemäßige Stichprobenkontrolle deiner bearbeiteten Meldungen. Dabei ist mir Folgendes aufgefallen:',
+    positiveHeader: 'Besonders gut gelöst hast du diese Meldungen:',
+    positiveBulk: 'Bei {n} kontrollierten {plural} gab es nichts zu beanstanden – weiter so!',
     outro: 'Bitte sehe das nicht als Kritik sondern als reines Verbesserungspotential. Wenn du Fragen hast, komme gerne auf mich zu.  :-)',
     signature: 'Liebe Grüße\n{mentor}'
   };
 
   // Reihenfolge/Beschriftung der Textfelder in den Einstellungen
   const TEXT_FIELDS = [
-    { key: 'greeting',       label: 'Anrede',                 hint: 'Platzhalter: {name}' },
-    { key: 'intro',          label: 'Einleitung',             hint: '' },
-    { key: 'positiveHeader', label: 'Überschrift Positives',  hint: 'Vor den positiv kommentierten Meldungen' },
-    { key: 'positiveBulk',   label: 'Sammelsatz Positives',   hint: 'Für „In Ordnung" ohne Kommentar. Platzhalter: {n}, {plural}' },
-    { key: 'outro',          label: 'Schlusstext',            hint: '' },
-    { key: 'signature',      label: 'Grußformel',             hint: 'Platzhalter: {mentor} (eigener Name). Leer = keine Grußformel' }
+    { key: 'greeting',       label: 'Anrede',                          hint: 'Platzhalter: {name}' },
+    { key: 'introFirst',     label: 'Einleitung (erste Kontrolle)',    hint: 'Wird verwendet, solange noch keine Kontrolle versendet wurde' },
+    { key: 'introRepeat',    label: 'Einleitung (weitere Kontrolle)',  hint: 'Wird ab der zweiten Kontrolle verwendet' },
+    { key: 'positiveHeader', label: 'Überschrift Positives',           hint: 'Vor den positiv kommentierten Meldungen' },
+    { key: 'positiveBulk',   label: 'Sammelsatz Positives',            hint: 'Für „In Ordnung" ohne Kommentar. Platzhalter: {n}, {plural}' },
+    { key: 'outro',          label: 'Schlusstext',                     hint: '' },
+    { key: 'signature',      label: 'Grußformel',                      hint: 'Platzhalter: {mentor} (eigener Name). Leer = keine Grußformel' }
   ];
 
   /* =========================================================================
@@ -698,7 +700,13 @@
         const nick = $(this).find('b').first().text().trim();
         if (!nick) return;
         const content = $(this).next('div');
-        if (content.length && /WEITERGELEITET/i.test(content.text())) {
+        if (!content.length) return;
+        const txt = content.text();
+        // Als "Weiterleitung" zaehlt sowohl eine klassische Weiterleitung an ein
+        // Team ("WEITERGELEITET an: ...") als auch eine Weiterleitung durch eine
+        // Meldetyp-Aenderung ("TYP GEAENDERT von ... in ..."). Das GE.?NDERT
+        // faengt das "Ä" auch bei abweichender Kodierung ab.
+        if (/WEITERGELEITET/i.test(txt) || /TYP\s+GE.?NDERT/i.test(txt)) {
           out.push(nick);
         }
       });
@@ -905,21 +913,27 @@
       parts.push((header ? header + '\n\n' : '') + block(positivesWithText));
     }
 
-    // Positive ohne Kommentar als Sammelsatz
+    // Positive ohne Kommentar als Sammelsatz + Auflistung der Melde-IDs
     if (positivesBulk.length) {
       const n = positivesBulk.length;
       const bulk = Store.text('positiveBulk')
         .replace(/\{n\}/g, n)
         .replace(/\{plural\}/g, n === 1 ? 'Meldung' : 'Meldungen')
         .trim();
-      if (bulk) parts.push(bulk);
+      const ids = positivesBulk
+        .map(r => '°>/meldung ' + fmtMeldungId(r.reportNumber) + '<°')
+        .join(', ');
+      parts.push(bulk ? bulk + '\n' + ids : ids);
     }
 
     const body = parts.join('\n\n');
 
     const anrede = (protege.name || protege.nick);
     const greeting = Store.text('greeting').replace(/\{name\}/g, anrede);
-    const intro = Store.text('intro').trim();
+    // Erste vs. wiederholte Kontrolle: sobald fuer diesen Schuetzling schon
+    // einmal eine Kontrolle versendet wurde, gilt es als "weitere" Kontrolle.
+    const hatFruehere = Store.reviewsFor(protege.id).some(r => r.sent);
+    const intro = Store.text(hatFruehere ? 'introRepeat' : 'introFirst').trim();
     const outro = Store.text('outro').trim();
 
     // Grußformel: nur wenn ein Name gesetzt ist UND die Vorlage nicht leer ist
@@ -1576,26 +1590,39 @@
     return 'https://admincalls-de.knuddels.de/ac/ac_viewcase.pl?domain=knuddels.de&id=' + reportId;
   }
 
-  // Erzeugt den Forum-Text: je eine farbige Gruppen-Ueberschrift fuer
-  // Beanstandungen und in Ordnung, darunter die Meldungen schlicht (fett
-  // verlinkte Melde-ID + Kommentar). Wurde KEIN Kommentar geschrieben, bleibt
-  // die Beschreibung leer (kein Platzhalter). Eintraege durch Leerzeile getrennt.
+  // Erzeugt den Forum-Text:
+  //  - farbige Ueberschrift "Beanstandungen", darunter jede beanstandete
+  //    Meldung einzeln (fett verlinkte Melde-ID + Kommentar).
+  //  - "in Ordnung" MIT Kommentar ebenfalls einzeln unter gruener Ueberschrift.
+  //  - "in Ordnung" OHNE Kommentar (nur "In Ordnung" geklickt) werden in einem
+  //    [quote]-Block zusammengefasst (Anzahl + komma-getrennte, verlinkte IDs).
   function buildForumText(results, texts, ratings) {
+    const link = row => '[url=' + forumViewcaseUrl(row.reportId) + ']' + (row.reportNumber || row.reportId) + '[/url]';
     const entry = row => {
-      const label = row.reportNumber || row.reportId;
-      const head = '[b][url=' + forumViewcaseUrl(row.reportId) + ']' + label + '[/url][/b]';
+      const head = '[b]' + link(row) + '[/b]';
       const t = (texts[row.reportId] || '').trim();
-      return t ? head + '\n' + t : head; // leerer Text -> nur die Melde-ID
+      return t ? head + '\n' + t : head;
     };
+    const hasText = row => !!((texts[row.reportId] || '').trim());
+
     const beanstandung = results.filter(r => ratings[r.reportId] === 'notok');
     const inOrdnung = results.filter(r => ratings[r.reportId] === 'ok');
+    const inOrdnungMitText = inOrdnung.filter(hasText);
+    const inOrdnungOhneText = inOrdnung.filter(r => !hasText(r));
 
     const blocks = [];
     if (beanstandung.length) {
       blocks.push('[color=red][b]✗ Beanstandungen[/b][/color]\n\n' + beanstandung.map(entry).join('\n\n'));
     }
-    if (inOrdnung.length) {
-      blocks.push('[color=green][b]✓ In Ordnung[/b][/color]\n\n' + inOrdnung.map(entry).join('\n\n'));
+    if (inOrdnungMitText.length) {
+      blocks.push('[color=green][b]✓ In Ordnung[/b][/color]\n\n' + inOrdnungMitText.map(entry).join('\n\n'));
+    }
+    if (inOrdnungOhneText.length) {
+      const n = inOrdnungOhneText.length;
+      const satz = n === 1
+        ? 'Des weiteren wurde 1 Meldung kontrolliert, zu der ich keine Beanstandung hatte:'
+        : 'Des weiteren wurden ' + n + ' Meldungen kontrolliert, zu denen ich keine Beanstandungen hatte:';
+      blocks.push('[quote]\n' + satz + '\n' + inOrdnungOhneText.map(link).join(', ') + '\n[/quote]');
     }
     return blocks.join('\n\n\n');
   }
@@ -1828,7 +1855,14 @@
     h += '<button class="mbtn bad rcRate' + (rating === 'notok' ? ' sel' : '') + '" data-idx="' + idx + '" data-r="notok">❌ Nicht in Ordnung</button>';
     h += '</div>';
     h += '<textarea class="rcComment" data-idx="' + idx + '" placeholder="Begründung / Kommentar (bei „Nicht in Ordnung" Pflicht, bei „In Ordnung" optional)" style="margin-top:8px">' + esc(comment) + '</textarea>';
-    h += '<div style="margin-top:6px"><button class="mbtn rcSave" data-idx="' + idx + '">💾 Bewertung speichern</button></div>';
+    const queued = Store.queueHas(protege.id, row.reportId);
+    h += '<div class="row-flex" style="margin-top:6px"><button class="mbtn rcSave" data-idx="' + idx + '">💾 Bewertung speichern</button>';
+    if (queued) {
+      h += '<button class="mbtn ghost rcUnqueue" data-idx="' + idx + '">★ vorgemerkt – entfernen</button>';
+    } else {
+      h += '<button class="mbtn ghost rcQueue" data-idx="' + idx + '">⭐ Zum Klären vormerken</button>';
+    }
+    h += '</div>';
     h += '</div>';
     return h;
   }
@@ -1983,6 +2017,32 @@
       // aus pending entfernen -> landet in "Offene Befunde"
       state.pending.splice(idx, 1);
       toast('Bewertung gespeichert.');
+      render();
+    });
+
+    // Aus der Kontrolle heraus zum spaeteren Klaeren vormerken. Die Meldung
+    // bleibt in der aktuellen Sichtung, wird zusaetzlich auf die (persistente)
+    // Vormerk-Liste gesetzt und ist so spaeter gezielt wieder auffindbar.
+    $('.rcQueue').on('click', function () {
+      const idx = $(this).data('idx');
+      const row = state.pending[idx];
+      if (!row) return;
+      Store.addToQueue({
+        protegeId: protege.id, reportId: row.reportId, reportNumber: row.reportNumber,
+        typeText: row.typeText, bearbeiter: row.bearbeiter || protege.nick,
+        bewertung: row.bewertung || '', date: row.date || '', status: row.status || 'geschlossen'
+      });
+      Store.save();
+      toast('Zum Klären vorgemerkt (' + esc(protege.nick) + ').');
+      render();
+    });
+    $('.rcUnqueue').on('click', function () {
+      const idx = $(this).data('idx');
+      const row = state.pending[idx];
+      if (!row) return;
+      Store.removeFromQueue(protege.id, row.reportId);
+      Store.save();
+      toast('Vormerkung entfernt.');
       render();
     });
 
@@ -2209,8 +2269,14 @@
     } else if (queued) {
       $wrap.append(nativeBadge('\u2605 vorgemerkt', 'DarkSalmon'));
     } else {
-      const $btn = $('<button type="button" style="' +
-        'background:rgb(175,142,232);color:#fff;border:1px solid transparent;border-radius:3px;' +
+      // Passt der Meldetyp der Meldung zu den beim Schuetzling angelegten Typen?
+      // Wenn nicht, wird der Button grau dargestellt (Hinweis: dieser Typ wird
+      // bei diesem Schuetzling eigentlich nicht kontrolliert). Klickbar bleibt er.
+      const typeOk = typeMatches(protege, row.typeText || '');
+      const bgColor = typeOk ? 'rgb(175,142,232)' : '#777';
+      const title = typeOk ? '' : ' title="Meldetyp ist bei diesem Schützling nicht als berücksichtigter Typ angelegt"';
+      const $btn = $('<button type="button"' + title + ' style="' +
+        'background:' + bgColor + ';color:#fff;border:1px solid transparent;border-radius:3px;' +
         'font-family:"Dosis", sans-serif;font-size:12px;font-weight:bold;padding:3px 9px;' +
         'cursor:pointer;white-space:nowrap">\u2192 zur Kontrolle</button>');
       $btn.on('click', function (e) {
