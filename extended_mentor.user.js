@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.22
+// @version      1.23
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -1236,7 +1236,13 @@
     });
 
     $('#pgCancel').on('click', function () { state.editProtege = null; render(); });
-    $('.pgEdit').on('click', function () { state.editProtege = Store.protege($(this).data('id')); render(); });
+    $('.pgEdit').on('click', function () {
+      state.editProtege = Store.protege($(this).data('id'));
+      render();
+      // Zum Bearbeiten-Formular nach oben scrollen, damit man nicht manuell hoch muss
+      const body = document.querySelector('#mentorRoot .mentor-body');
+      if (body) body.scrollTop = 0;
+    });
     $('.pgDel').on('click', function () {
       const pr = Store.protege($(this).data('id'));
       if (!pr) return;
