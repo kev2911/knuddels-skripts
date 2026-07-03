@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.21
+// @version      1.22
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -913,17 +913,15 @@
       parts.push((header ? header + '\n\n' : '') + block(positivesWithText));
     }
 
-    // Positive ohne Kommentar als Sammelsatz + Auflistung der Melde-IDs
+    // Positive ohne Kommentar als Sammelsatz (nur Text, ohne ID-Auflistung –
+    // die konkrete Auflistung kommt separat nur in den Forum-Text).
     if (positivesBulk.length) {
       const n = positivesBulk.length;
       const bulk = Store.text('positiveBulk')
         .replace(/\{n\}/g, n)
         .replace(/\{plural\}/g, n === 1 ? 'Meldung' : 'Meldungen')
         .trim();
-      const ids = positivesBulk
-        .map(r => '°>/meldung ' + fmtMeldungId(r.reportNumber) + '<°')
-        .join(', ');
-      parts.push(bulk ? bulk + '\n' + ids : ids);
+      if (bulk) parts.push(bulk);
     }
 
     const body = parts.join('\n\n');
@@ -952,6 +950,23 @@
   }
 
   function forumQuote(text) { return '[quote]\n' + text + '\n[/quote]'; }
+
+  // Separater [quote]-Block NUR fuer den Forum-Text: listet die in Ordnung
+  // befundenen Meldungen OHNE Kommentar als verlinkte Melde-IDs auf (wie bei
+  // der Internen Kontrolle). Kommt NICHT in die Nachricht an den Schuetzling.
+  function buildForumIdList(protege) {
+    const bulk = Store.reviewsFor(protege.id)
+      .filter(r => !r.sent && r.rating === 'ok' && !((r.comment || '').trim()));
+    if (!bulk.length) return '';
+    const n = bulk.length;
+    const satz = n === 1
+      ? 'Des Weiteren wurde 1 Meldung kontrolliert, zu der es keine Beanstandung gab:'
+      : 'Des Weiteren wurden ' + n + ' Meldungen kontrolliert, zu denen es keine Beanstandungen gab:';
+    const ids = bulk
+      .map(r => '[url=' + forumViewcaseUrl(r.reportId) + ']' + (r.reportNumber || r.reportId) + '[/url]')
+      .join(', ');
+    return '[quote]\n' + satz + '\n' + ids + '\n[/quote]';
+  }
 
   function copyToClipboard(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -2077,8 +2092,11 @@
       toast('Nachricht in die Zwischenablage kopiert.');
     });
     $('#ctlCopyForum').on('click', function () {
-      // Erst Text in die Zwischenablage, dann das Forum im neuen Tab oeffnen.
-      copyToClipboard(forumQuote($('#ctlMsgText').val()));
+      // Nachricht als [quote] + separater [quote] mit der Auflistung der ohne
+      // Kommentar in Ordnung befundenen Meldungen (nur im Forum-Text).
+      const extra = buildForumIdList(protege);
+      const forumText = forumQuote($('#ctlMsgText').val()) + (extra ? '\n\n' + extra : '');
+      copyToClipboard(forumText);
       const url = (protege.forumLink || '').trim();
       if (url) window.open(url, '_blank');
       toast('Forum-Kopie ([quote]) kopiert – Forum wird geöffnet.');
