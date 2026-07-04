@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.07
+// @version      1.08
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1701,7 +1701,7 @@ const chrome = {
             if (!$albumSel.length) $albumSel = $ul.find('select').filter(isAlbumSel).first();
             if (!$albumSel.length) $albumSel = $metainfo.find('select').first();   // Fallback: Select der Metainfo
             if ($albumSel.length) {
-                const $vb = NewLayout.verdictBlock($albumSel, null);
+                const $vb = NewLayout.verdictBlock($albumSel, null, false, true);
                 $vb.find('.epa-block-label').text('Ganzes Album bewerten');
                 $vb.addClass('epa-album-verdict');
                 $meta.append($vb);
@@ -1771,7 +1771,7 @@ const chrome = {
                 if (gHref) $rs.append($('<a class="epa-btn epa-btn-sm" target="_blank" rel="noopener">Google</a>').attr('href', gHref));
                 $card.append($rs);
             }
-            $card.append(NewLayout.verdictBlock($select, $isok, true));
+            $card.append(NewLayout.verdictBlock($select, $isok, true, true));
             return $card;
         }
 
@@ -1904,7 +1904,7 @@ const chrome = {
             $meta.append($('<div class="epa-album-title">Übrige Bilder des Albums</div>'));
             const $a0 = $('select[name="a0"]').first();
             if ($a0.length) {
-                const $vb = NewLayout.verdictBlock($a0, null);
+                const $vb = NewLayout.verdictBlock($a0, null, false, true);
                 $vb.find('.epa-block-label').text('Ganzes Album bewerten');
                 $meta.append($vb);
             }
@@ -2332,10 +2332,11 @@ const chrome = {
             return $block;
         }
 
-        static verdictBlock($select, $isok, compact) {
+        static verdictBlock($select, $isok, compact, quickAgb) {
             const $block = $('<div class="' + (compact ? 'epa-block-c' : 'epa-block epa-block-decide') + '"></div>');
             if (!compact) $block.append($('<div class="epa-block-label">2 \u00b7 Bewerten</div>'));
             const $row = $('<div class="epa-decide"></div>');
+            let $agb = null, $io = null;
 
             if ($select && $select.length) {
                 if (Config.USE_DROPDOWN) {
@@ -2345,6 +2346,29 @@ const chrome = {
                     $clone.on('change', function () { Verdict.set($select, $clone.val()); });
                     $select.on('epa:verdict.nl', function () { $clone.val($select.val()); });
                     $row.append($clone);
+                    // Schnellbutton „AGB-Verstoß" (nur Album-Bereich) – macht dasselbe wie die Dropdown-Auswahl
+                    if (quickAgb) {
+                        let agbVal = null;
+                        $select.find('option').each(function () {
+                            const $o = $(this);
+                            if (/AGB-Verstoß/i.test($o.text() || '') || /GeneralTermsViolation/i.test($o.val() || '')) {
+                                agbVal = $o.val(); return false;
+                            }
+                        });
+                        if (agbVal) {
+                            $agb = $('<button type="button" class="epa-btn epa-quick-agb">AGB-Verstoß</button>');
+                            $agb.on('click', function (e) {
+                                e.preventDefault();
+                                $clone.val(agbVal);
+                                Verdict.set($select, agbVal);
+                                if ($isok && $isok.length) {   // „Foto i.O." aufheben (Grün entfernen)
+                                    $isok.prop('checked', false);
+                                    if ($io) $io.removeClass('epa-io-active');
+                                }
+                            });
+                            if (!compact) $row.append($agb);   // Album oben: rechts neben dem Dropdown
+                        }
+                    }
                 } else {
                     const $btns = $('<div class="epa-btns"></div>');
                     const opts = [];
@@ -2388,14 +2412,32 @@ const chrome = {
             }
 
             if ($isok && $isok.length) {
-                const $io = $('<button type="button" class="epa-io">Foto i.O.</button>');
+                $io = $('<button type="button" class="epa-io">Foto i.O.</button>');
                 if ($isok.is(':checked')) $io.addClass('epa-io-active');
                 $io.on('click', function (e) {
                     e.preventDefault();
                     const c = !$isok.is(':checked');
                     $isok.prop('checked', c);
                     $io.toggleClass('epa-io-active', c);
+                    if (c && $select && $select.length) {
+                        // „Foto i.O." aktiviert -> Bewertung im Dropdown auf „Okay" setzen
+                        let okVal = null;
+                        $select.find('option').each(function () {
+                            const $o = $(this);
+                            if (/^\s*Okay\s*$/i.test($o.text() || '') || /^Ok$/i.test($o.val() || '')) { okVal = $o.val(); return false; }
+                        });
+                        if (okVal != null) Verdict.set($select, okVal);
+                    }
                 });
+            }
+
+            // Einzelbild (compact): „Foto i.O." und AGB-Schnellbutton nebeneinander
+            if (compact && ($io || ($agb && $agb.length))) {
+                const $ioRow = $('<div class="epa-io-row"></div>');
+                if ($io) $ioRow.append($io);
+                if ($agb && $agb.length) $ioRow.append($agb);
+                $row.append($ioRow);
+            } else if ($io) {
                 $row.append($io);
             }
 
@@ -2455,6 +2497,12 @@ const chrome = {
                 .epa-btn-report { border-color:#7c3aed; color:#7c3aed; }
                 .epa-btn-admin { background:#fef2f2; border-color:#f6c9c9; color:#b4423a; font-weight:600; }
                 .epa-btn-admin:hover { background:#fde4e4; border-color:#f0b4b4; }
+                .epa-quick-agb { background:#fdf4f4; border-color:#e9c9c9; color:#a8564f; font-weight:500;
+                    white-space:nowrap; flex:0 0 auto; }
+                .epa-quick-agb:hover { background:#f8e9e9; border-color:#e0b9b9; }
+                .epa-io-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+                .epa-block-c .epa-io-row .epa-io,
+                .epa-block-c .epa-io-row .epa-quick-agb { font-size:11px; padding:4px 8px; }
                 .epa-btn-ok { background:#16a34a !important; border-color:#16a34a !important; color:#fff !important; }
                 .epa-report-hint { display:inline-block; font-size:11px; color:#b91c1c; background:#fee2e2;
                     border:1px solid #fecaca; border-radius:6px; padding:3px 8px; }
@@ -2487,6 +2535,7 @@ const chrome = {
                 .epa-album-meta { display:flex; flex-direction:column; gap:6px; }
                 .epa-album-sub { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
                 .epa-album-verdict { margin-top:8px; border-top:none !important; padding-top:0 !important; }
+                .epa-album-verdict .epa-decide { flex-wrap:nowrap; align-items:center; }
                 .epa-album-verdict .epa-block-label { color:#2563eb; font-weight:600; }
                 .epa-acards { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
                     gap:12px; align-items:start; }
