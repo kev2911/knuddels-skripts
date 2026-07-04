@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.08
+// @version      1.09
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -92,6 +92,7 @@ const chrome = {
         static RETRY_DELAY = 2000;    // Wartezeit vor erneutem Versuch (ms)
         static USE_DROPDOWN = true;   // Kategorie als Dropdown (true) oder einzelne Buttons (false)
         static NEW_LAYOUT = true;     // neues Listen-Layout (Standard: an)
+        static HOVER_PREVIEW = true;  // eigene Bild-Vorschau beim Mouseover (Standard: an; aus = nur native Vorschau)
         // Im Buttons-Modus zuerst gezeigte Bewertungen (Rest hinter "+ mehr").
         // Treffer per Teilstring auf den Options-Wert (deckt Profil/Verify ab).
         static PRIMARY_VERDICTS = ['Ok', 'OpenSexually', 'GeneralTermsViolation', 'FakeAttempt'];
@@ -122,7 +123,8 @@ const chrome = {
         thMedium: 50,
         thHigh: 70,
         useDropdown: true,
-        newLayout: true
+        newLayout: true,
+        hoverPreview: true
     };
 
     /**
@@ -147,6 +149,7 @@ const chrome = {
                 if (s.thHigh != null) Config.AI_THRESHOLD_HIGH = s.thHigh;
                 if (typeof s.useDropdown === 'boolean') Config.USE_DROPDOWN = s.useDropdown;
                 if (typeof s.newLayout === 'boolean') Config.NEW_LAYOUT = s.newLayout;
+                if (typeof s.hoverPreview === 'boolean') Config.HOVER_PREVIEW = s.hoverPreview;
             } catch (e) { /* Storage evtl. nicht verfügbar */ }
         }
 
@@ -162,7 +165,8 @@ const chrome = {
                         thMedium: Config.AI_THRESHOLD_MEDIUM,
                         thHigh: Config.AI_THRESHOLD_HIGH,
                         useDropdown: Config.USE_DROPDOWN,
-                        newLayout: Config.NEW_LAYOUT
+                        newLayout: Config.NEW_LAYOUT,
+                        hoverPreview: Config.HOVER_PREVIEW
                     }
                 });
             } catch (e) { /* ign?? */ }
@@ -572,6 +576,10 @@ const chrome = {
                                 <input type="checkbox" data-key="newLayout">
                                 <span>Neues Layout</span>
                             </label>
+                            <label class="epa-set epa-set-check">
+                                <input type="checkbox" data-key="hoverPreview">
+                                <span>Eigene Vorschau (Mouseover)</span>
+                            </label>
                             <label class="epa-set">
                                 <span>Delay zwischen Bildern (s)</span>
                                 <input type="number" min="0" step="0.5" data-key="checkDelay">
@@ -631,6 +639,7 @@ const chrome = {
                     autoCheck: bar.find('input[data-key="autoCheck"]'),
                     useDropdown: bar.find('input[data-key="useDropdown"]'),
                     newLayout: bar.find('input[data-key="newLayout"]'),
+                    hoverPreview: bar.find('input[data-key="hoverPreview"]'),
                     checkDelay: bar.find('input[data-key="checkDelay"]'),
                     retryDelay: bar.find('input[data-key="retryDelay"]'),
                     maxRetries: bar.find('input[data-key="maxRetries"]'),
@@ -648,7 +657,8 @@ const chrome = {
                 thMedium: Config.AI_THRESHOLD_MEDIUM,
                 thHigh: Config.AI_THRESHOLD_HIGH,
                 useDropdown: Config.USE_DROPDOWN,
-                newLayout: Config.NEW_LAYOUT
+                newLayout: Config.NEW_LAYOUT,
+                hoverPreview: Config.HOVER_PREVIEW
             });
             this.updateThresholdLabels(Config.AI_THRESHOLD_MEDIUM, Config.AI_THRESHOLD_HIGH);
 
@@ -779,6 +789,7 @@ const chrome = {
             this.refs.inputs.autoCheck.prop('checked', !!s.autoCheck);
             this.refs.inputs.useDropdown.prop('checked', s.useDropdown !== false);
             this.refs.inputs.newLayout.prop('checked', !!s.newLayout);
+            this.refs.inputs.hoverPreview.prop('checked', s.hoverPreview !== false);
             this.refs.inputs.checkDelay.val(s.checkDelay / 1000);
             this.refs.inputs.retryDelay.val(s.retryDelay / 1000);
             this.refs.inputs.maxRetries.val(s.maxRetries);
@@ -795,6 +806,7 @@ const chrome = {
                 autoCheck: this.refs.inputs.autoCheck.is(':checked'),
                 useDropdown: this.refs.inputs.useDropdown.is(':checked'),
                 newLayout: this.refs.inputs.newLayout.is(':checked'),
+                hoverPreview: this.refs.inputs.hoverPreview.is(':checked'),
                 checkDelay: Math.max(0, num('checkDelay', 2)) * 1000,
                 retryDelay: Math.max(0, num('retryDelay', 2)) * 1000,
                 maxRetries: Math.max(1, Math.round(num('maxRetries', 3))),
@@ -1316,6 +1328,13 @@ const chrome = {
         static makeZoomable($img, largeUrl) {
             if (!$img || !$img.length) return;
             const el = $img.get(0);
+            if (!Config.HOVER_PREVIEW) {
+                // Eigene Vorschau deaktiviert: nur Styling setzen, „userimage" behalten,
+                // damit das native Mouseover der Seite (delegiert auf .userimage) weiter greift.
+                $img.addClass('epa-uimg');
+                if (largeUrl) $img.attr('data-large', largeUrl);
+                return;
+            }
             $img.removeClass('userimage').addClass('epa-uimg epa-zoomable');
             if (largeUrl) $img.attr('data-large', largeUrl);
             $img.removeAttr('title');
@@ -2993,6 +3012,7 @@ const chrome = {
         applySettings(s) {
             const layoutChanged = (s.newLayout !== Config.NEW_LAYOUT);
             const dropdownChanged = (s.useDropdown !== Config.USE_DROPDOWN);
+            const hoverChanged = (s.hoverPreview !== Config.HOVER_PREVIEW);
 
             Config.AUTO_CHECK = s.autoCheck;
             Config.CHECK_DELAY = s.checkDelay;
@@ -3002,6 +3022,7 @@ const chrome = {
             Config.AI_THRESHOLD_HIGH = s.thHigh;
             Config.USE_DROPDOWN = s.useDropdown;
             Config.NEW_LAYOUT = s.newLayout;
+            Config.HOVER_PREVIEW = s.hoverPreview;
 
             this.aiDetectionUI.reclassifyAll();
             this.toolbar.updateThresholdLabels(Config.AI_THRESHOLD_MEDIUM, Config.AI_THRESHOLD_HIGH);
@@ -3010,8 +3031,8 @@ const chrome = {
             const layoutActive = $('.epa-list, .epa-album').length > 0;
             if (layoutChanged && NewLayout.PAGE()) {
                 this.switchLayout(s.newLayout);
-            } else if (layoutActive && dropdownChanged) {
-                // Bewertungs-UI (Buttons <-> Dropdown) im Listen-Layout neu aufbauen
+            } else if (layoutActive && (dropdownChanged || hoverChanged)) {
+                // Bewertungs-UI bzw. Bild-Vorschau im Listen-Layout neu aufbauen
                 try { NewLayout.teardown(); NewLayout.apply(); this.aiDetectionUI.rebuildEntries(); }
                 catch (e) { console.error('[kn-fotoadmin] Neuaufbau fehlgeschlagen:', e); }
             } else if (!layoutActive) {
