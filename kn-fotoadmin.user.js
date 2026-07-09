@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.09
+// @version      1.10
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1381,7 +1381,7 @@ const chrome = {
             $('.epa-nl-hidden').removeClass('epa-nl-hidden').show();
             // Galerie-Bilder (admin-profile/albumphoto) zurücksetzen
             $('img.epa-uimg.epa-zoomable').removeClass('epa-zoomable epa-uimg').addClass('userimage').removeAttr('data-large');
-            $('.epa-verify-badge').remove();
+            $('.epa-verify-badge, .epa-verify-badge-x').remove();
             $('body').removeClass('epa-nl');
         }
 
@@ -1860,6 +1860,24 @@ const chrome = {
         }
 
         // Macht übrige Seitenbilder (History/Alben/Verify) zoombar und markiert Verify-Bilder
+        // Überschrift der Sektion finden, in der ein Element steht (nächste vorausgehende h1–h4).
+        static sectionTitle(el) {
+            let node = el;
+            while (node && node !== document.body && node.parentElement) {
+                let sib = node.previousElementSibling;
+                while (sib) {
+                    if (/^h[1-4]$/i.test(sib.tagName)) return (sib.textContent || '').trim();
+                    if (sib.querySelector) {
+                        const h = sib.querySelector('h1,h2,h3,h4');
+                        if (h) return (h.textContent || '').trim();
+                    }
+                    sib = sib.previousElementSibling;
+                }
+                node = node.parentElement;
+            }
+            return '';
+        }
+
         static enhanceGalleries($vbox) {
             $('img.userimage').each(function () {
                 const $img = $(this);
@@ -1868,13 +1886,23 @@ const chrome = {
                 if ($img.hasClass('small_square')) return;          // Kommentar-Avatare überspringen
                 const large = NewLayout.bestSrc($img);
                 NewLayout.makeZoomable($img, large);                 // Vorschau + Seiten-Hover unterdrücken
-                // Verify-Bilder grün markieren (Dateikennung -ver oder innerhalb der Verify-Box)
+                if ($img.next('.epa-verify-badge, .epa-verify-badge-x').length) return;
+
                 const sig = ($img.attr('src') || '') + ' ' + ($img.attr('alt') || '');
                 const inVerify = $vbox && $vbox.length && $.contains($vbox[0], this);
-                if (/-ver/i.test(sig) || inVerify) {
-                    if (!$img.next('.epa-verify-badge').length) {
-                        $('<span class="epa-verify-badge">\u2713 Verify</span>').insertAfter($img);
+                const title = (NewLayout.sectionTitle(this) || '').toLowerCase();
+                const rejected = /abgelehnt/.test(title);                       // „…abgelehnter …fotos"
+                const isVerify = /-ver/i.test(sig) || inVerify || /verifizierung/.test(title);
+
+                if (rejected) {
+                    // In „abgelehnt"-Sektionen KEIN grüner Haken.
+                    // Abgelehntes Verifizierungsfoto -> rot mit X; abgelehnte Profil-/Albenfotos -> gar kein Badge.
+                    if (/verifizierung/.test(title) || (isVerify && !/(profil|alben|album)/.test(title))) {
+                        $('<span class="epa-verify-badge-x">\u2717 Verify</span>').insertAfter($img);
                     }
+                } else if (isVerify) {
+                    // Aktuelles / bisherige (nicht abgelehnte) Verify-Fotos -> grüner Haken (korrekt)
+                    $('<span class="epa-verify-badge">\u2713 Verify</span>').insertAfter($img);
                 }
             });
         }
@@ -2589,6 +2617,9 @@ const chrome = {
                 body.epa-nl .epa-verify-badge { display:inline-block; margin:4px 0 0; padding:2px 8px;
                     font:600 11px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; color:#047857;
                     background:#d1fae5; border:1px solid #6ee7b7; border-radius:999px; }
+                body.epa-nl .epa-verify-badge-x { display:inline-block; margin:4px 0 0; padding:2px 8px;
+                    font:600 11px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; color:#b91c1c;
+                    background:#fee2e2; border:1px solid #fca5a5; border-radius:999px; }
                 /* --- Geforderte Geste (Verifizierung) --- */
                 .epa-verify-instr { margin:0 0 12px; padding:12px 14px; border-radius:12px;
                     background:linear-gradient(135deg,#fef3c7,#fffbeb); border:1px solid #fcd34d;
