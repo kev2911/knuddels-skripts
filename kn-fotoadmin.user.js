@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.10
+// @version      1.11
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1464,9 +1464,24 @@ const chrome = {
             $row.append($imgs);
 
             $row.append(NewLayout.headNode($info));
-            // Untertitel des Fotos/Albums (falls vorhanden) – bei der Kontrolle wichtig
+            // Untertitel des Fotos/Albums (falls vorhanden) – bei der Kontrolle wichtig.
+            // Alben: eigenes Element .album_photo_title. Fotoadministration/-kontrolle:
+            // freier Textknoten in der new_photo-Zelle (nach dem Bild, vor dem Formular).
             const $rowTitle = $li.find('.album_photo_title').first();
-            const rowTitleText = $rowTitle.length ? ($rowTitle.text() || '').replace(/\s+/g, ' ').trim() : '';
+            let rowTitleText = $rowTitle.length ? ($rowTitle.text() || '').replace(/\s+/g, ' ').trim() : '';
+            if (!rowTitleText && page !== 'verify' && $mainCell.length) {
+                const parts = [];
+                $mainCell.contents().each(function () {
+                    if (this.nodeType !== 3) return;                       // nur direkte Textknoten
+                    const t = (this.nodeValue || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+                    if (!t) return;
+                    if (/^Foto in Ordnung$/i.test(t)) return;              // Formular-Beschriftung
+                    if (/Byte\)?\s*$/i.test(t)) return;                    // Dateigrößen-Angabe
+                    if (/vorherige Kontrolle|Ablehnungen innerhalb/i.test(t)) return;  // Verify-Infos
+                    parts.push(t);
+                });
+                rowTitleText = parts.join(' ').trim();
+            }
             if (rowTitleText) {
                 $row.append($('<div class="epa-acard-title"></div>')
                     .append($('<span class="epa-acard-title-lbl">Untertitel</span>'))
