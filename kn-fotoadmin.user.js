@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.11
+// @version      1.12
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1261,22 +1261,6 @@ const chrome = {
             $select.val(value);
             $select.trigger('epa:verdict');
         }
-        static fakeValue($select) {
-            let v = null;
-            if (!$select || !$select.length) return v;
-            $select.find('option').each(function () {
-                const t = $(this).text().trim().toLowerCase();
-                if (t.indexOf('fake-versuch') !== -1 || (t.indexOf('fake') !== -1 && t.indexOf('versuch') !== -1)) {
-                    v = $(this).val();
-                    return false;
-                }
-            });
-            if (v == null) {
-                const cand = $select.find('option').filter(function () { return /FakeAttempt/i.test($(this).val()); }).first();
-                if (cand.length) v = cand.val();
-            }
-            return v;
-        }
     }
 
     /**
@@ -2508,9 +2492,10 @@ const chrome = {
         }
 
         static macro(type, nick, $select, $btn) {
+            // Kopiert NUR den Macro-Befehl in die Zwischenablage.
+            // Setzt bewusst KEINE Bewertung mehr (früher wurde hier still
+            // „Fake-Versuch" vorgewählt, was zu ungewollten Administrationen führte).
             NewLayout.copy('/macro ' + type + ':' + nick + '|Fotokontr.');
-            const v = Verdict.fakeValue($select);
-            if (v != null) Verdict.set($select, v);
             const orig = $btn.text();
             $btn.text('Kopiert!').addClass('epa-btn-done');
             setTimeout(function () { $btn.text(orig).removeClass('epa-btn-done'); }, 1000);
