@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.12
+// @version      1.13
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -309,6 +309,17 @@ const chrome = {
             AdminActions.injectStyles();
             AdminActions.blocks = [];
 
+            // Klassisches Layout: Nick/Alter-Overlay an den ANFANG der Zeile verschieben,
+            // damit es als eigene Zeile ÜBER den Fotos steht (statt Overlay/unter dem Bild).
+            $('li.photo_cell_line').each(function () {
+                const $li = $(this);
+                const $ov = $li.children('.photo_cell_overlay').first();
+                if ($ov.length && !$ov.data('epaMoved')) {
+                    $ov.data('epaMoved', true);
+                    $li.prepend($ov);
+                }
+            });
+
             // Mitglieder über ihr Namens-Element finden (je nach Seite unterschiedlich)
             $('.user-info, .detaildata').each(function () {
                 const $info = $(this);
@@ -324,7 +335,28 @@ const chrome = {
                 AdminActions.blocks.push(block);
 
                 AdminActions.addMacros(block, name);
-                AdminActions.addReport(block, name);
+                // Fotoverifizierung: dort ist der Melde-Button nicht gewünscht
+                if (!Utils.isCurrentPage(Config.URLS.VERIFY_CONTROL)) {
+                    AdminActions.addReportUnderImage(block, name);
+                }
+            });
+
+            // Nick/Alter-Zeile: Klick auf den Kasten kopiert „/w +NICK" (wie im neuen Layout)
+            $('.photo_cell_overlay .user-info, .photo_content_wrapper .detaildata').each(function () {
+                const $el = $(this);
+                if ($el.data('epaNick')) return;
+                const name = Utils.extractName($el.text());
+                if (!name) return;
+                $el.data('epaNick', true).addClass('epa-nickcopy')
+                    .attr('title', 'Klick: \u201e/w +' + name + '\u201c kopieren');
+                $el.on('click', function (ev) {
+                    if ($(ev.target).is('a')) return;              // Links im Kasten nicht abfangen
+                    NewLayout.copy('/w +' + name);
+                    $el.find('.epa-nick-flash').remove();
+                    const $f = $('<span class="epa-nick-flash">Kopiert \u2713</span>');
+                    $el.append($f);
+                    setTimeout(function () { $f.remove(); }, 900);
+                });
             });
 
             AdminActions.bindMacroEvents();
@@ -361,42 +393,87 @@ const chrome = {
             const bot = $('<a href="#" class="epa-macro" data-type="bot">Bot</a>').attr('data-nick', name);
             const scam = $('<a href="#" class="epa-macro" data-type="scam">Scam</a>').attr('data-nick', name);
 
+            // Administration: hat die Seite bereits einen nativen „Administration"-Link
+            // (z. B. Verifizierungskontrolle), KEINEN eigenen „Admin" doppelt dazulegen.
+            const hasNativeAdm = block.find('a').not('.epa-macro').filter(function () {
+                return /^\s*Administration\s*$/i.test($(this).text() || '');
+            }).length > 0;
+            let adm = null;
+            if (!hasNativeAdm) {
+                let admHref = null;
+                block.find('a').each(function () {
+                    const h = ($(this).attr('href') || '').replace(/\s+/g, '');
+                    if (/photos-admin-profile\.html/i.test(h) && /[?&]id=/i.test(h)) { admHref = h; return false; }
+                });
+                if (!admHref) {
+                    const id = NewLayout.memberIdFromScope(block);
+                    if (id) admHref = 'photos-admin-profile.html?id=' + id;
+                }
+                // „Admin" bewusst kurz, damit die Zeile Yandex|Google|Bot|Scam|Admin
+                // garantiert einzeilig bleibt (Zelle ist nur fotobreit).
+                if (admHref) adm = $('<a class="epa-macro" target="_blank" rel="noopener">Admin</a>').attr('href', admHref);
+            }
+
             // Farbe vom vorhandenen Link übernehmen (z. B. das Rot von Yandex/Google)
             if (ref.length) {
                 const col = ref.css('color');
                 if (col) {
                     bot.css('color', col).attr('data-color', col);
                     scam.css('color', col).attr('data-color', col);
+                    if (adm) adm.css('color', col);
                 }
             }
 
-            if (ref.length) {
-                ref.after(' ', bot, ' ', scam);
-            } else {
-                const host = block.find('.photo_cell_header').last();
-                (host.length ? host : block).append(' ', bot, ' ', scam);
+            // Albenkontrolle: Block ist die Foto-Liste (ul) – Aktionen als eigene,
+            // ZENTRIERTE Zeile OBEN über allen Bildern (statt am letzten Google-Link).
+            if (block.find('li.album_image').length > 0) {
+                const $bar = $('<li class="epa-album-actionbar"></li>');
+                $bar.append(bot, ' \u00b7 ', scam);
+                if (adm) $bar.append(' \u00b7 ', adm);
+                block.prepend($bar);
+                return;
             }
 
-            // Select für "Fake-Versuch" auf beiden Buttons merken (falls vorhanden)
-            const sel = block.find('.select, select[name^="p"]').first();
-            if (sel.length) {
-                bot.data('select', sel);
-                scam.data('select', sel);
+            // Eine Zeile: Yandex | Google | Bot | Scam | Admin (ganz rechts).
+            // „Melden" sitzt als lila Button direkt unter dem Bild (addReportUnderImage).
+            const items = adm ? [' ', bot, ' ', scam, ' ', adm] : [' ', bot, ' ', scam];
+            if (ref.length) {
+                ref.after.apply(ref, items);
+            } else {
+                const host = block.find('.photo_cell_header').last();
+                (host.length ? host : block).append.apply(host.length ? host : block, items);
             }
         }
 
-        static addReport(block, name) {
+        // Lila „Melden"-Button direkt unter dem (zu prüfenden) Bild – meldet im Hintergrund
+        static addReportUnderImage(block, name) {
             if (block.find('.epa-report').length) return;
+            let $img = block.find('.photo_cell.new_photo .userimage').first();
+            if (!$img.length) $img = block.find('.userimage').first();
+            if (!$img.length) return;
 
-            const img = block.find('.userimage').first();
-            if (img.length === 0) return;
+            const btn = $('<a href="#" class="epa-report">Melden</a>');
+            btn.on('click', function (e) {
+                e.preventDefault();
+                const url = 'https://photo.knuddels.de/photos-comments.html?mode=report&where='
+                    + encodeURIComponent(name.toLowerCase()) + '-pro0l0p';
+                btn.text('Melde\u2026');
+                fetch(url, { credentials: 'include' })
+                    .then(function (r) { return r.text(); })
+                    .then(function (html) {
+                        if (/uuuups|nicht passieren sollen/i.test(html)) {
+                            btn.text('Melden');
+                            window.alert('Kein Foto vorhanden, bitte manuell melden.');
+                        } else {
+                            btn.text('Gemeldet \u2713').addClass('epa-report-ok');
+                        }
+                    })
+                    .catch(function () { btn.text('Melden'); window.alert('Melden fehlgeschlagen \u2013 bitte manuell.'); });
+                return false;
+            });
 
-            const nick = name.toLowerCase();
-            const url = `https://photo.knuddels.de/photos-comments.html?mode=report&where=${nick}-pro0l0p`;
-            const btn = $('<a class="epa-report" target="_blank" rel="noopener">Profilbild melden</a>').attr('href', url);
-
-            // Ans ENDE des Blocks (nach Nick/Geschlecht/Alter), damit nichts überdeckt wird
-            block.append($('<div class="epa-report-row"></div>').append(btn));
+            const $anchor = $img.closest('a');
+            ($anchor.length ? $anchor : $img).after($('<div class="epa-report-row"></div>').append(btn));
         }
 
         static bindMacroEvents() {
@@ -406,12 +483,10 @@ const chrome = {
                 const nick = el.attr('data-nick');
                 const type = el.attr('data-type'); // 'bot' | 'scam'
 
+                // Kopiert NUR den Macro-Befehl – setzt bewusst KEINE Bewertung
+                // (früher wurde hier still „Fake-Versuch" vorgewählt).
                 navigator.clipboard.writeText(`/macro ${type}:${nick}|Fotokontr.`);
                 AdminActions.flash(el);
-
-                // Bei Bot UND Scam die Kategorie auf "Fake-Versuch" setzen
-                const sel = el.data('select');
-                if (sel && sel.length) CategoryControls.setFake(sel);
                 return false;
             });
         }
@@ -428,13 +503,36 @@ const chrome = {
         static injectStyles() {
             if ($('#epa-action-styles').length) return;
             const css = `
-                .epa-macro { display:inline; margin:0 2px; font-size:12px; cursor:pointer;
-                    text-decoration:underline; white-space:nowrap; }
+                .epa-macro { display:inline; margin:0 1px; font-size:12px; cursor:pointer;
+                    text-decoration:underline; white-space:nowrap; font-weight:bold !important; }
                 .epa-macro:hover { opacity:.8; }
-                .epa-report-row { display:block; clear:both; margin:8px 0 2px; }
+                /* Kopfzeile einzeilig halten (Yandex|Google|Bot|Scam|Admin) */
+                body:not(.epa-nl) .photo_cell_header { white-space:nowrap; }
+                /* Albenkontrolle: zentrierte Aktionszeile über allen Bildern */
+                .epa-album-actionbar { display:block; list-style:none; width:100%; clear:both;
+                    text-align:center; padding:5px 0; margin:0 0 6px;
+                    background:#ececec; border-radius:4px; }
+                .epa-album-actionbar .epa-macro { font-size:13px; margin:0 6px; }
+                .epa-report-row { display:block; clear:both; margin:6px 0 4px; }
                 .epa-report { display:inline-block; padding:4px 10px; border-radius:5px;
-                    background:#7c3aed; color:#fff !important; font-size:12px; text-decoration:none; }
+                    background:#7c3aed; color:#fff !important; font-size:12px; font-weight:bold;
+                    text-decoration:none; }
                 .epa-report:hover { filter:brightness(1.12); }
+                .epa-report-ok { background:#16a34a; }
+                .epa-nickcopy { cursor:pointer; }
+                .epa-nick-flash { margin-left:6px; color:#16a34a; font-weight:600; font-size:11px; }
+                /* Klassisches Layout: Nick/Alter als eigene Zeile ÜBER den Fotos
+                   (Overlay wird per Skript an den Zeilenanfang verschoben) – so
+                   überdecken sich Accountname/Alter und die Buttons nicht mehr. */
+                body:not(.epa-nl) .photo_cell_overlay { position:static !important;
+                    left:auto !important; right:auto !important; top:auto !important; bottom:auto !important;
+                    width:auto !important; height:auto !important; clear:both; margin:0 0 6px; }
+                body:not(.epa-nl) .photo_cell_overlay .user-info { position:static !important;
+                    display:inline-block; padding:3px 10px; border-radius:6px;
+                    background:#f1f5f9; border:1px solid #dbe3ec; font-weight:600; }
+                body:not(.epa-nl) .photo_cell_overlay .user-info .female,
+                body:not(.epa-nl) .photo_cell_overlay .user-info .male,
+                body:not(.epa-nl) .photo_cell_overlay .user-info .administrative { display:inline-block; vertical-align:middle; }
             `;
             $('<style id="epa-action-styles">').text(css).appendTo('head');
         }
@@ -923,8 +1021,14 @@ const chrome = {
             } else if (Utils.isCurrentPage(Config.URLS.ALBUM_CONTROL)) {
                 return { imageElements: $('li.album_image:not(.upload_normal) .userimage'), getUrlFromLink: true };
             } else if (Utils.isCurrentPage(Config.URLS.VERIFY_CONTROL)) {
-                // Verify-Kontrolle: Selektor ggf. an den echten DOM anpassen
-                return { imageElements: $('.userimage'), getUrlFromLink: false };
+                // NUR das Verify-Bild prüfen (nicht das Profilbild daneben)
+                return {
+                    imageElements: $('img.userimage').filter(function () {
+                        const sig = ($(this).attr('src') || '') + ' ' + ($(this).attr('alt') || '');
+                        return /-ver\d/i.test(sig);
+                    }),
+                    getUrlFromLink: false
+                };
             } else if (Utils.isCurrentPage(Config.URLS.PROFILE)) {
                 return { imageElements: $('.large'), getUrlFromLink: false };
             }
@@ -1004,6 +1108,17 @@ const chrome = {
             const direct = imgElement.attr('data-ai-url');
             if (direct) return direct;
             const baseUrl = 'https://photo.knuddels.de/';
+            // Bevorzugt: der Link ums Bild zeigt bereits auf die Groß-Variante –
+            // zuverlässiger als der Regex-Umbau des Dateinamens (der z. B. beim
+            // Verify-Bild [src = s-Miniatur] und bei Nicks mit „l" fehlschlug).
+            const href = (imgElement.closest('a').attr('href') || '').replace(/\s+/g, '');
+            if (/\.(jpe?g|png|webp|gif)(\?|$)/i.test(href)) {
+                if (/^https?:\/\//i.test(href)) {
+                    if (/^https?:\/\/photo\.knuddels\.de\//i.test(href)) return href;
+                } else {
+                    return baseUrl + href.replace(/^\//, '');
+                }
+            }
             let imagePath;
             if (getUrlFromLink) {
                 imagePath = imgElement.attr('alt').replace(/l(?!.*l)/, 'vl');
@@ -1216,26 +1331,6 @@ const chrome = {
             $wrap.find('.epa-cat-btn').removeClass('epa-cat-active')
                 .filter(function () { return $(this).attr('data-val') === v; })
                 .addClass('epa-cat-active');
-        }
-
-        // Kategorie auf "Fake-Versuch" setzen (Label-Match, sonst bekannter Wert)
-        static setFake($sel) {
-            if (!$sel || $sel.length === 0) return;
-            let val = null;
-            $sel.find('option').each(function () {
-                const t = $(this).text().trim().toLowerCase();
-                if (t.includes('fake-versuch') || (t.includes('fake') && t.includes('versuch'))) {
-                    val = $(this).val();
-                    return false;
-                }
-            });
-            if (val == null && $sel.find('option[value="FakeAttemptProfile"]').length) {
-                val = 'FakeAttemptProfile';
-            }
-            if (val == null) return;
-
-            $sel.val(val);
-            CategoryControls.reflect($sel);
         }
 
         static injectStyles() {
