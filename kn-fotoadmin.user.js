@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.13
+// @version      1.14
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1543,6 +1543,16 @@ const chrome = {
             $row.append($imgs);
 
             $row.append(NewLayout.headNode($info));
+            // Albumname („Aus: …") aus dem Zellkopf übernehmen – wichtig auf der
+            // Album-Einzelseite (Administration), damit sichtbar ist, in welchem Album man steht.
+            const $albLink = $mainCell.find('.photo_cell_header a[href*="photos-album.html"]').first();
+            if ($albLink.length) {
+                $row.append($('<div class="epa-row-album"></div>')
+                    .append('Album: ')
+                    .append($('<a target="_blank" rel="noopener"></a>')
+                        .attr('href', $albLink.attr('href'))
+                        .text(($albLink.text() || '').trim())));
+            }
             // Untertitel des Fotos/Albums (falls vorhanden) – bei der Kontrolle wichtig.
             // Alben: eigenes Element .album_photo_title. Fotoadministration/-kontrolle:
             // freier Textknoten in der new_photo-Zelle (nach dem Bild, vor dem Formular).
@@ -2042,7 +2052,28 @@ const chrome = {
             const $section = $('<div class="epa-album"></div>');
             const $head = $('<div class="epa-album-head"></div>');
             const $meta = $('<div class="epa-album-meta"></div>');
-            $meta.append($('<div class="epa-album-title">Übrige Bilder des Albums</div>'));
+            // Albumname aus der nativen Metainfo übernehmen („Stinker (6 Bilder) | alle Alben")
+            const $mi = $('.metainfo').filter(function () {
+                return $(this).find('a[href*="photos-album.html"]').length > 0;
+            }).first();
+            const $title = $('<div class="epa-album-title"></div>');
+            const $albA = $mi.find('a[href*="photos-album.html"]').first();
+            if ($albA.length) {
+                $title.append('Album: ')
+                    .append($('<a class="epa-album-name" target="_blank" rel="noopener"></a>')
+                        .attr('href', $albA.attr('href')).text(($albA.text() || '').trim()));
+                const cnt = (($mi.text() || '').match(/\(\s*\d+\s*Bilder?\s*\)/i) || [])[0];
+                if (cnt) $title.append(' ' + cnt);
+                const $allA = $mi.find('a[href*="photos-albums.html"]').first();
+                if ($allA.length) {
+                    $title.append(' \u00b7 ')
+                        .append($('<a class="epa-album-all" target="_blank" rel="noopener">alle Alben</a>')
+                            .attr('href', $allA.attr('href')));
+                }
+            } else {
+                $title.text('Übrige Bilder des Albums');
+            }
+            $meta.append($title);
             const $a0 = $('select[name="a0"]').first();
             if ($a0.length) {
                 const $vb = NewLayout.verdictBlock($a0, null, false, true);
@@ -2768,6 +2799,10 @@ const chrome = {
                 .epa-lock-by { color:#6b7280; }
                 /* --- Album-Grid-Zusätze --- */
                 .epa-album-title { font-weight:700; font-size:14px; color:#111827; }
+                .epa-album-title a.epa-album-name { color:#1d4ed8; text-decoration:underline; }
+                .epa-album-title a.epa-album-all { color:#64748b; font-weight:500; font-size:12px; }
+                .epa-row-album { font-size:12px; color:#475569; }
+                .epa-row-album a { color:#1d4ed8; text-decoration:underline; }
                 .epa-acard-foot { display:flex; align-items:center; gap:8px; justify-content:space-between; }
                 .epa-cmt-count { font-size:11px; color:#6b7280; }
                 /* --- Kommentar-Suche --- */
