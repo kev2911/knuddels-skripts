@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.27
+// @version      1.30
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
