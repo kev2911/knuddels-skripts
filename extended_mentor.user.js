@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.23
+// @version      1.25
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -511,7 +511,8 @@
     #mentorRoot .grow { flex:1 1 auto; }
 
     #mentorRoot .typebox { border:1px solid rgba(var(--acc),.4); border-radius:5px; padding:8px; margin:6px 0; }
-    #mentorRoot iframe.preview { width:100%; height:560px; border:1px solid rgba(var(--acc),.5); border-radius:5px; margin-top:8px; background:#fff; }
+    #mentorRoot iframe.preview { width:100%; min-width:1000px; height:560px; border:1px solid rgba(var(--acc),.5); border-radius:5px; margin-top:8px; background:#fff; display:block; }
+    #mentorRoot .rcPreviewBox, #mentorRoot .icPreviewBox { overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; }
 
     /* Toast */
     #mentorToastContainer { position:fixed; top:20px; right:20px; z-index:100001; }
@@ -716,32 +717,74 @@
     }
   }
 
-  // Laedt die Detailseite EINMAL und merkt sich Bewerter + Weiterleiter.
+  // Laedt die Detailseite EINMAL und merkt sich Bewerter + Weiterleiter + Typ-Aenderungen.
   const _reportInfoCache = {};
   async function getReportInfo(reportId) {
     let info = _reportInfoCache[reportId];
     if (info === undefined) {
       try {
         const html = await gmGet(viewcaseUrl(reportId));
-        info = { rater: extractRaterNick(html), forwarders: extractForwarders(html) };
+        info = {
+          rater: extractRaterNick(html),
+          forwarders: extractForwarders(html),
+          typeChanges: extractTypeChanges(html)
+        };
       } catch (e) {
-        info = { rater: '', forwarders: [] };
+        info = { rater: '', forwarders: [], typeChanges: [] };
       }
       _reportInfoCache[reportId] = info;
     }
     return info;
   }
 
-  // Gehoert die Meldung zu diesem Schuetzling? Der "mode" steuert, was zaehlt:
-  //   'rated'     -> nur BEWERTET   ("Meldung bereits bewertet (von: NICK ...)")
-  //   'both'      -> bewertet ODER weitergeleitet
-  //   'forwarded' -> nur WEITERGELEITET ("WEITERGELEITET an: ...")
-  // Default ist 'rated' (bisheriges Verhalten).
-  async function reportMatchesProtege(reportId, protege, mode) {
+  // Liest aus dem HTML die Meldetyp-Aenderungen: wer hat auf welchen Ziel-Typ
+  // geaendert. Aktion: 'TYP GEAENDERT von "X" in "Y"'. Zurueck: [{nick, toType}].
+  // Verschiedene Anfuehrungszeichen werden abgedeckt.
+  function extractTypeChanges(html) {
+    try {
+      const doc = $.parseHTML(html);
+      const out = [];
+      const Q = '["\u201E\u201C\u201D\u00AB\u00BB\u2018\u2019]';
+      const re = new RegExp('TYP\\s+GE.?NDERT\\b[\\s\\S]*?\\bin\\s+' + Q + '([^"\u201E\u201C\u201D\u00AB\u00BB\u2018\u2019]+)', 'i');
+      $(doc).find('div[style*="width:170px"]').each(function () {
+        const nick = $(this).find('b').first().text().trim();
+        if (!nick) return;
+        const content = $(this).next('div');
+        if (!content.length) return;
+        const txt = content.text().replace(/\s+/g, ' ');
+        const m = txt.match(re);
+        if (m) out.push({ nick: nick, toType: (m[1] || '').trim() });
+      });
+      return out;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // Prueft, ob ein (Ziel-)Meldetyp zu den beim Schuetzling angelegten Typen gehoert.
+  function typeIsAssigned(protege, typeText) {
+    const cats = REPORT_CATEGORIES.filter(c => protege.reportTypes.includes(c.key));
+    return cats.some(c => { try { return c.match(typeText); } catch (e) { return false; } });
+  }
+
+  // Gehoert die Meldung zu diesem Schuetzling? "mode":
+  //   'rated'      -> nur bewertet
+  //   'both'       -> bewertet oder weitergeleitet
+  //   'forwarded'  -> nur weitergeleitet
+  //   'typechange' -> nur Meldungen, bei denen der Schuetzling den Meldetyp auf
+  //                   einen ihm NICHT zugewiesenen Typ geaendert hat
+  async function reportMatchesProtege(row, protege, mode) {
+    const reportId = (row && row.reportId) ? row.reportId : row; // row oder reportId
     const info = await getReportInfo(reportId);
     const nick = normalizeNick(protege.nick);
+
+    if (mode === 'typechange') {
+      return (info.typeChanges || []).some(tc =>
+        normalizeNick(tc.nick) === nick && !typeIsAssigned(protege, tc.toType));
+    }
+
     const isRater = !!(info.rater && normalizeNick(info.rater) === nick);
-    const isForwarder = info.forwarders.some(f => normalizeNick(f) === nick);
+    const isForwarder = (info.forwarders || []).some(f => normalizeNick(f) === nick);
     if (mode === 'forwarded') return isForwarder;
     if (mode === 'both') return isRater || isForwarder;
     return isRater; // 'rated'
@@ -756,12 +799,16 @@
     // Vorauswahl aus der Suchliste: guenstige Filter (Status/Typ/Datum/bereits gesichtet).
     // Der angezeigte "letzte Bearbeiter" ist NICHT zuverlaessig der Bewerter, daher wird
     // er hier nur als grobe Vorauswahl genutzt und unten per Detailseite verifiziert.
+    // Im Modus "typechange" muessen auch Meldungen mit "fremdem" Typ als
+    // Kandidaten durch (die eigentliche Pruefung erfolgt per Detailseite).
+    const looseType = (mode === 'typechange');
+
     function collect(doc) {
       parseSearchRows(doc).forEach(row => {
         if (seen.has(row.reportId)) return;
         if (reviewedIds.has(row.reportId)) return;
         if (!/geschlossen/i.test(row.status)) return;
-        if (!typeMatches(protege, row.typeText)) return;
+        if (!looseType && !typeMatches(protege, row.typeText)) return;
         if (fromDate) {
           const rd = parseRowDate(row.date);
           if (!rd || rd < fromDate) return; // aelter als Startdatum -> raus
@@ -790,7 +837,7 @@
       for (let i = 0; i < list.length && verified.length < count; i++) {
         const row = list[i];
         if (onProgress) onProgress('Pruefe Meldungen ... (' + verified.length + ' von ' + count + ' bestaetigt)');
-        if (await reportMatchesProtege(row.reportId, protege, mode)) verified.push(row);
+        if (await reportMatchesProtege(row, protege, mode)) verified.push(row);
       }
     }
 
@@ -867,7 +914,7 @@
     const out = [];
     for (let i = 0; i < prelim.length; i++) {
       if (onProgress) onProgress('Pruefe Meldungen ... (' + out.length + ' bestaetigt, ' + (i + 1) + '/' + prelim.length + ')');
-      if (await reportMatchesProtege(prelim[i].reportId, protege, mode)) out.push(prelim[i]);
+      if (await reportMatchesProtege(prelim[i], protege, mode)) out.push(prelim[i]);
     }
     return out;
   }
@@ -1479,6 +1526,7 @@
         fmodeOpt('rated', 'Ohne Weiterleitungen (nur selbst bewertet)') +
         fmodeOpt('both', 'Mit Weiterleitungen (bewertet + weitergeleitet)') +
         fmodeOpt('forwarded', 'Ausschließlich Weiterleitungen') +
+        fmodeOpt('typechange', 'Meldetypänderung ohne Bearbeitungsrecht') +
       '</select>' +
       '<span class="muted">gilt für die Zufalls-Stichprobe und „Meldungen durchsuchen"</span></div>';
 
@@ -1684,6 +1732,7 @@
         fmodeOpt('rated', 'Ohne Weiterleitungen (nur selbst bewertet)') +
         fmodeOpt('both', 'Mit Weiterleitungen (bewertet + weitergeleitet)') +
         fmodeOpt('forwarded', 'Ausschließlich Weiterleitungen') +
+        fmodeOpt('typechange', 'Meldetypänderung ohne Bearbeitungsrecht') +
       '</select></div>';
 
     // Anzahl + Suche
