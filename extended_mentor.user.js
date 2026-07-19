@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.26
+// @version      1.27
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -354,7 +354,7 @@
     #mentorRoot .mentor-overlay.open { display:block; }
     #mentorRoot .mentor-modal {
       background: var(--bg); color: var(--text);
-      width: 880px; max-width: 95%; height: 86vh; margin:auto;
+      width: 1080px; max-width: 95%; height: 86vh; margin:auto;
       border:1px solid #888; border-radius:10px; padding:18px 22px;
       position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
       display:flex; flex-direction:column;
@@ -516,7 +516,7 @@
       overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch;
     }
     #mentorRoot iframe.preview {
-      display:block; width:1200px; max-width:none; height:560px; margin:8px auto 0;
+      display:block; width:100%; min-width:0; height:600px; margin:8px auto 0;
       border:1px solid rgba(var(--acc),.5); border-radius:5px; background:#fff;
     }
 
