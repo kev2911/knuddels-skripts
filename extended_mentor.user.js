@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.30
+// @version      1.31
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -232,6 +232,8 @@
     // Team-Rolle (key aus ROLE_PRESETS, z.B. 'cm'). Dient der Meldetypen-
     // Vorauswahl und der Anzeige in der Liste.
     this.role = o.role || '';
+    // Frei definierbare Kategorie (z.B. Team oder Channel), Name als String.
+    this.category = o.category || '';
   }
 
   function Review(o) {
@@ -249,7 +251,29 @@
   }
 
   function defaultSettings() {
-    return { mentorName: '', texts: Object.assign({}, DEFAULT_TEXTS) };
+    return { mentorName: '', texts: Object.assign({}, DEFAULT_TEXTS), categories: [], changelogSeen: [] };
+  }
+
+  // Changelog-Eintraege (neueste zuerst). Jeder Eintrag braucht eine eindeutige
+  // "id"; anhand dieser wird gemerkt, ob ein Nutzer den Eintrag schon gesehen hat.
+  const CHANGELOG = [
+    {
+      id: '2026-07-19-kategorien',
+      date: '19.07.2026',
+      title: 'Eigene Kategorien für Schützlinge',
+      text: 'Ab sofort kannst du unter „Eigene Einstellungen" individuelle Kategorien (z. B. Teams, Channels oder nach Wahl) anlegen und deinen Schützlingen zuweisen, sowohl bei der Einzelanlage, dem Massenimport als auch beim Bearbeiten. In der Meldekontrolle kannst du anschließend gezielt nach einer Kategorie filtern. Standardmäßig werden weiterhin alle Schützlinge angezeigt.'
+    }
+  ];
+
+  function changelogUnseen() {
+    const seen = (Store.settings && Store.settings.changelogSeen) || [];
+    return CHANGELOG.filter(c => !seen.includes(c.id));
+  }
+  function changelogMarkAllSeen() {
+    const seen = (Store.settings.changelogSeen || []).slice();
+    CHANGELOG.forEach(c => { if (!seen.includes(c.id)) seen.push(c.id); });
+    Store.settings.changelogSeen = seen;
+    Store.save();
   }
 
   const Store = {
@@ -268,6 +292,8 @@
         if (typeof s.mentorName === 'string') this.settings.mentorName = s.mentorName;
         // Fehlende Text-Schluessel mit Default auffuellen (vorwaertskompatibel)
         this.settings.texts = Object.assign({}, DEFAULT_TEXTS, s.texts || {});
+        if (Array.isArray(s.categories)) this.settings.categories = s.categories.filter(c => typeof c === 'string');
+        if (Array.isArray(s.changelogSeen)) this.settings.changelogSeen = s.changelogSeen;
       } catch (e) { this.settings = defaultSettings(); }
       try { this.queue = JSON.parse(localStorage.getItem('mentorQueue')) || []; }
       catch (e) { this.queue = []; }
@@ -1049,6 +1075,8 @@
     statsOpen: {},           // ausgeklappte Schuetzlinge in der Statistik {id:true}
     compareResult: null,     // Ergebnis des Schuetzlings-Abgleichs (Array oder null)
     forwardMode: 'rated',    // Weiterleitungs-Modus der Stichprobe ('rated'|'both'|'forwarded')
+    controlCategory: '',     // aktiver Kategorie-Filter in der Meldekontrolle ('' = alle)
+    catAssignOpen: null,     // Kategorie, deren Zuordnungs-Ansicht in den Einstellungen offen ist
     internal: null           // Interne Kontrolle (Ad-hoc): { nick,name,msLink,from,types,role,mode,count,results,texts,forumText,loading,loadingText }
   };
 
@@ -1069,6 +1097,7 @@
             <div class="mentor-tab" data-tab="proteges">👥 Schützlinge</div>
             <div class="mentor-tab" data-tab="settings">⚙️ Eigene Einstellungen</div>
             <div class="mentor-tab" data-tab="stats">📊 Statistik</div>
+            <div class="mentor-tab" data-tab="changelog">📢 Changelog<span id="clBadge"></span></div>
           </div>
           <div class="mentor-body" id="mentorBody"></div>
         </div>
@@ -1117,7 +1146,32 @@
     if (state.tab === 'proteges') renderProteges($body);
     else if (state.tab === 'control') renderControl($body);
     else if (state.tab === 'settings') renderSettings($body);
+    else if (state.tab === 'changelog') renderChangelog($body);
     else renderStats($body);
+    updateChangelogBadge();
+  }
+
+  // Zeigt am Changelog-Tab die Anzahl ungesehener Eintraege als rotes Badge.
+  function updateChangelogBadge() {
+    const n = changelogUnseen().length;
+    const $b = $('#clBadge');
+    if (!$b.length) return;
+    if (n > 0) $b.text(String(n)).css({
+      display: 'inline-block', marginLeft: '6px', background: '#c0392b', color: '#fff',
+      borderRadius: '9px', padding: '0 6px', fontSize: '11px', fontWeight: '700', lineHeight: '16px'
+    });
+    else $b.text('').css('display', 'none');
+  }
+
+  // Erzeugt ein <select> mit den angelegten Kategorien ("selected" markiert die aktuelle).
+  function categorySelectHtml(id, selected) {
+    const cats = Store.settings.categories || [];
+    let h = '<select id="' + id + '"><option value="">– keine –</option>';
+    cats.forEach(cat => {
+      h += '<option value="' + esc(cat) + '"' + (cat === selected ? ' selected' : '') + '>' + esc(cat) + '</option>';
+    });
+    h += '</select>';
+    return h;
   }
 
   /* ---- Tab: Schützlinge ---- */
@@ -1135,6 +1189,7 @@
     html += '<tr><td>Meldesystem-Link</td><td><div class="row-flex"><input type="text" id="pgMs" class="grow" placeholder="wird beim Speichern automatisch erzeugt, falls leer" value="' + esc(p.meldesystemLink) + '"><button class="mbtn ghost" id="pgGenMs">Aus Nick erzeugen</button></div></td></tr>';
     html += '<tr><td>Forum-Link</td><td><input type="text" id="pgForum" style="width:100%" value="' + esc(p.forumLink) + '"></td></tr>';
     html += '<tr><td>Kontrolle ab Datum</td><td><input type="text" id="pgFrom" style="width:160px" placeholder="TT.MM.JJJJ" value="' + esc(p.searchFrom) + '"> <span class="muted">Meldungen vor diesem Datum werden ignoriert (leer = keine Grenze)</span></td></tr>';
+    html += '<tr><td>Kategorie</td><td>' + categorySelectHtml('pgCategory', p.category) + ' <span class="muted">optional – in „Eigene Einstellungen" anlegbar</span></td></tr>';
     html += '</table>';
 
     html += '<div class="typebox"><b>Berücksichtigte Meldetypen</b> <span class="muted">(RwV-Typen werden immer automatisch mit einbezogen)</span><br>';
@@ -1159,7 +1214,8 @@
     html += '<div class="muted" style="margin-bottom:6px">Nicknames mit Komma getrennt eingeben. Für jeden wird ein Schützling angelegt (Meldesystem-Suche wird automatisch erzeugt). ' +
       'Datum und Meldetypen unten gelten für alle. Bereits vorhandene bleiben erhalten – bei ihnen wird höchstens das Datum aktualisiert.</div>';
     html += '<textarea id="bulkNicks" placeholder="z. B.: MaxMuster, LisaMeier, TomSchmidt, AnnaKoch" style="min-height:70px"></textarea>';
-    html += '<div class="row-flex" style="margin-top:8px"><div>Kontrolle ab Datum: <input type="text" id="bulkFrom" style="width:140px" placeholder="TT.MM.JJJJ"></div></div>';
+    html += '<div class="row-flex" style="margin-top:8px"><div>Kontrolle ab Datum: <input type="text" id="bulkFrom" style="width:140px" placeholder="TT.MM.JJJJ"></div>' +
+      '<div>Kategorie: ' + categorySelectHtml('bulkCategory', '') + '</div></div>';
     html += '<div class="typebox" style="margin-top:8px"><b>Meldetypen für alle</b> <span class="muted">(RwV immer automatisch)</span><br>';
     html += '<div class="row-flex" style="margin:6px 0 8px"><span>Rolle für alle:</span>' +
       '<select id="bulkRolePreset"><option value="">– Rolle wählen –</option>';
@@ -1213,6 +1269,7 @@
           const roleLabel = (ROLE_PRESETS.find(r => r.key === pr.role) || {}).label || pr.role;
           html += '<span class="pill acc">' + esc(roleLabel) + '</span>';
         }
+        if (pr.category) html += '<span class="pill" style="background:#5a6b8c;color:#fff">🏷️ ' + esc(pr.category) + '</span>';
         html += '<span class="pill grey">' + revs.length + ' gesichtet</span>';
         if (pending) html += '<span class="pill salmon">' + pending + ' Versand offen</span>';
         html += '</div>';
@@ -1270,16 +1327,17 @@
       const from = $('#pgFrom').val().trim();
       if (from && !parseDateInput(from)) { toast('Datum bitte als TT.MM.JJJJ angeben.'); return; }
       const role = $('#pgRolePreset').val() || '';
+      const category = $('#pgCategory').val() || '';
 
       if (state.editProtege) {
         const pr = state.editProtege;
         pr.nick = nick; pr.name = $('#pgName').val().trim();
         pr.meldesystemLink = ms; pr.forumLink = $('#pgForum').val().trim();
-        pr.reportTypes = types; pr.searchFrom = from; pr.role = role;
+        pr.reportTypes = types; pr.searchFrom = from; pr.role = role; pr.category = category;
       } else {
         Store.proteges.push(new Protege({
           nick, name: $('#pgName').val().trim(), meldesystemLink: ms,
-          forumLink: $('#pgForum').val().trim(), reportTypes: types, searchFrom: from, role
+          forumLink: $('#pgForum').val().trim(), reportTypes: types, searchFrom: from, role, category
         }));
       }
       Store.save();
@@ -1313,19 +1371,22 @@
       if (from && !parseDateInput(from)) { toast('Datum bitte als TT.MM.JJJJ angeben.'); return; }
       const types = $('.bulkType:checked').map(function () { return $(this).val(); }).get();
       const bulkRole = $('#bulkRolePreset').val() || '';
+      const bulkCategory = $('#bulkCategory').val() || '';
 
       let created = 0, updated = 0, untouched = 0;
       nicks.forEach(nick => {
         const existing = findProtegeByNick(nick);
         if (existing) {
-          // Vorhandene bleiben erhalten; hoechstens das Datum aktualisieren
-          if (from) { existing.searchFrom = from; updated++; }
-          else untouched++;
+          // Vorhandene bleiben erhalten; hoechstens Datum/Kategorie aktualisieren
+          let changed = false;
+          if (from) { existing.searchFrom = from; changed = true; }
+          if (bulkCategory) { existing.category = bulkCategory; changed = true; }
+          if (changed) updated++; else untouched++;
         } else {
           const ms = buildProtegeSearchLink(nick);
           Store.proteges.push(new Protege({
             nick, name: '', meldesystemLink: ms, forumLink: '',
-            reportTypes: types.slice(), searchFrom: from, role: bulkRole
+            reportTypes: types.slice(), searchFrom: from, role: bulkRole, category: bulkCategory
           }));
           created++;
         }
@@ -1401,6 +1462,52 @@
       '<button class="mbtn ghost" id="setReset">↩️ Texte auf Standard zurücksetzen</button></div>';
     html += '</div>';
 
+    // Eigene Kategorien (Teams / Channels / frei)
+    html += '<div class="mwrap"><h4>🏷️ Kategorien</h4>';
+    html += '<div class="muted" style="margin-bottom:8px">Lege eigene Kategorien an (z. B. Teams oder Channels). ' +
+      'Du kannst sie deinen Schützlingen zuweisen und in der Meldekontrolle danach filtern.</div>';
+    html += '<div class="row-flex"><input type="text" id="catNew" class="grow" placeholder="Neue Kategorie (z. B. Team Admin, Channel XY)">' +
+      '<button class="mbtn" id="catAdd">➕ Hinzufügen</button></div>';
+    const cats = Store.settings.categories || [];
+    if (cats.length) {
+      html += '<div class="row-flex" style="margin-top:8px"><button class="mbtn ghost" id="catSortAZ">🔤 Alphabetisch sortieren</button>' +
+        '<div class="grow"></div>' +
+        '<button class="mbtn ghost" id="catClearAll">🧹 Alle Zuordnungen löschen</button></div>';
+      html += '<table class="mtab" style="margin-top:8px"><tr><th>Kategorie</th><th style="width:90px">Schützl.</th><th style="width:230px">Aktion</th></tr>';
+      cats.forEach((cat, i) => {
+        const count = Store.proteges.filter(p => p.category === cat).length;
+        html += '<tr><td>' + esc(cat) + '</td><td>' + count + '</td><td>';
+        html += '<button class="mbtn ghost catUp" data-cat="' + esc(cat) + '"' + (i === 0 ? ' disabled' : '') + ' title="nach oben">▲</button>';
+        html += ' <button class="mbtn ghost catDown" data-cat="' + esc(cat) + '"' + (i === cats.length - 1 ? ' disabled' : '') + ' title="nach unten">▼</button>';
+        html += ' <button class="mbtn ghost catRename" data-cat="' + esc(cat) + '" title="umbenennen">✏️</button>';
+        html += ' <button class="mbtn ghost catAssign" data-cat="' + esc(cat) + '" title="Schützlinge zuordnen">👥</button>';
+        html += ' <button class="mbtn bad catDel" data-cat="' + esc(cat) + '" title="löschen">❌</button>';
+        html += '</td></tr>';
+
+        // Aufgeklappte Zuordnungs-Ansicht
+        if (state.catAssignOpen === cat) {
+          html += '<tr class="statsDetailRow"><td colspan="3"><div class="mwrap" style="margin:0">';
+          html += '<div class="muted" style="margin-bottom:6px">Schützlinge für „' + esc(cat) + '" auswählen. ' +
+            'Ein Schützling gehört immer zu genau einer Kategorie – ein Häkchen verschiebt ihn hierher.</div>';
+          if (!Store.proteges.length) {
+            html += '<div class="muted">Noch keine Schützlinge angelegt.</div>';
+          } else {
+            Store.proteges.slice().sort((a, b) => a.nick.localeCompare(b.nick)).forEach(pr => {
+              const checked = pr.category === cat ? 'checked' : '';
+              const other = (pr.category && pr.category !== cat) ? ' <span class="muted">(aktuell: ' + esc(pr.category) + ')</span>' : '';
+              html += '<label class="cb"><input type="checkbox" class="catAssignChk" data-id="' + pr.id + '" data-cat="' + esc(cat) + '" ' + checked + '> ' + esc(pr.nick) + other + '</label>';
+            });
+          }
+          html += '<div style="margin-top:8px"><button class="mbtn ghost" id="catAssignClose">Fertig</button></div>';
+          html += '</div></td></tr>';
+        }
+      });
+      html += '</table>';
+    } else {
+      html += '<div class="muted" style="margin-top:8px">Noch keine Kategorien angelegt.</div>';
+    }
+    html += '</div>';
+
     // Sicherung (Komplett-Export/Import)
     html += '<div class="mwrap"><h4>💾 Sicherung</h4><div class="row-flex">' +
       '<button class="mbtn" id="mExport">⬇️ Sicherung exportieren</button>' +
@@ -1416,6 +1523,101 @@
   function bindSettingsEvents() {
     $('#setTextsDetails').on('toggle', function () {
       state.textsOpen = this.open;
+    });
+
+    // Kategorie hinzufuegen
+    $('#catAdd').on('click', function () {
+      const name = ($('#catNew').val() || '').trim();
+      if (!name) { toast('Bitte einen Namen eingeben.'); return; }
+      Store.settings.categories = Store.settings.categories || [];
+      if (Store.settings.categories.some(c => c.toLowerCase() === name.toLowerCase())) {
+        toast('Diese Kategorie gibt es bereits.'); return;
+      }
+      Store.settings.categories.push(name);
+      Store.save();
+      render();
+    });
+    $('#catNew').on('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('#catAdd').click(); } });
+
+    // Kategorie loeschen (Zuordnung bei Schuetzlingen wird geleert)
+    $('.catDel').on('click', function () {
+      const cat = $(this).data('cat');
+      const count = Store.proteges.filter(p => p.category === cat).length;
+      const msg = count > 0
+        ? 'Kategorie „' + cat + '" löschen? Sie wird bei ' + count + ' Schützling(en) entfernt.'
+        : 'Kategorie „' + cat + '" löschen?';
+      if (!confirm(msg)) return;
+      Store.settings.categories = (Store.settings.categories || []).filter(c => c !== cat);
+      Store.proteges.forEach(p => { if (p.category === cat) p.category = ''; });
+      if (state.catAssignOpen === cat) state.catAssignOpen = null;
+      Store.save();
+      render();
+    });
+
+    // Sortierung: alphabetisch
+    $('#catSortAZ').on('click', function () {
+      Store.settings.categories = (Store.settings.categories || []).slice().sort((a, b) => a.localeCompare(b, 'de'));
+      Store.save();
+      render();
+    });
+
+    // Sortierung: eine Kategorie nach oben / unten
+    function moveCat(cat, dir) {
+      const arr = Store.settings.categories || [];
+      const i = arr.indexOf(cat);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= arr.length) return;
+      const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+      Store.save();
+      render();
+    }
+    $('.catUp').on('click', function () { moveCat($(this).data('cat'), -1); });
+    $('.catDown').on('click', function () { moveCat($(this).data('cat'), 1); });
+
+    // Umbenennen
+    $('.catRename').on('click', function () {
+      const oldName = $(this).data('cat');
+      const neu = (prompt('Kategorie umbenennen:', oldName) || '').trim();
+      if (!neu || neu === oldName) return;
+      const arr = Store.settings.categories || [];
+      if (arr.some(c => c.toLowerCase() === neu.toLowerCase())) { toast('Diese Kategorie gibt es bereits.'); return; }
+      const i = arr.indexOf(oldName);
+      if (i >= 0) arr[i] = neu;
+      Store.proteges.forEach(p => { if (p.category === oldName) p.category = neu; });
+      if (state.catAssignOpen === oldName) state.catAssignOpen = neu;
+      if (state.controlCategory === oldName) state.controlCategory = neu;
+      Store.save();
+      render();
+    });
+
+    // Zuordnungs-Ansicht auf/zu
+    $('.catAssign').on('click', function () {
+      const cat = $(this).data('cat');
+      state.catAssignOpen = (state.catAssignOpen === cat) ? null : cat;
+      render();
+    });
+    $('#catAssignClose').on('click', function () { state.catAssignOpen = null; render(); });
+
+    // Schützling einer Kategorie zuordnen / daraus entfernen
+    $('.catAssignChk').on('change', function () {
+      const id = $(this).data('id');
+      const cat = $(this).data('cat');
+      const pr = Store.protege(id);
+      if (!pr) return;
+      if (this.checked) pr.category = cat;
+      else if (pr.category === cat) pr.category = '';
+      Store.save();
+      render();
+    });
+
+    // Alle Zuordnungen löschen
+    $('#catClearAll').on('click', function () {
+      const n = Store.proteges.filter(p => p.category).length;
+      if (!n) { toast('Es gibt keine Zuordnungen.'); return; }
+      if (!confirm('Alle Kategorie-Zuordnungen löschen? Die Kategorien selbst bleiben erhalten. (' + n + ' betroffen)')) return;
+      Store.proteges.forEach(p => { p.category = ''; });
+      Store.save();
+      render();
     });
 
     $('#setSave').on('click', function () {
@@ -1509,15 +1711,43 @@
       return;
     }
 
-    if (!state.controlProtegeId || !Store.protege(state.controlProtegeId)) {
-      state.controlProtegeId = Store.proteges[0].id;
+    // Kategorie-Filter (Standard: alle Schützlinge)
+    const cats = Store.settings.categories || [];
+    const catFilter = state.controlCategory || '';
+    const visible = catFilter ? Store.proteges.filter(p => p.category === catFilter) : Store.proteges;
+
+    // Aktueller Schützling muss zur sichtbaren Auswahl gehören
+    if (!state.controlProtegeId || !visible.some(p => p.id === state.controlProtegeId)) {
+      state.controlProtegeId = visible.length ? visible[0].id : null;
     }
+
+    // Kategorie-Filter-Zeile (nur wenn Kategorien existieren)
+    html += '<div class="mwrap">';
+    if (cats.length) {
+      html += '<div class="row-flex" style="margin-bottom:8px"><span>Kategorie-Filter:</span>' +
+        '<select id="ctlCatFilter"><option value="">Alle Schützlinge</option>';
+      cats.forEach(cat => {
+        html += '<option value="' + esc(cat) + '"' + (cat === catFilter ? ' selected' : '') + '>' + esc(cat) + '</option>';
+      });
+      html += '</select><span class="muted">zeigt nur Schützlinge dieser Kategorie</span></div>';
+    }
+
+    // Keine Schützlinge in der gewählten Kategorie
+    if (!visible.length) {
+      html += '<div class="muted">Keine Schützlinge in der Kategorie „' + esc(catFilter) + '". ' +
+        'Wähle „Alle Schützlinge" oder weise Schützlingen diese Kategorie zu.</div></div>';
+      $body.html(html);
+      $('#ctlInternalOpen').on('click', openInternal);
+      $('#ctlCatFilter').on('change', function () { state.controlCategory = $(this).val(); state.pending = []; state.message = null; state.browseResults = null; render(); });
+      return;
+    }
+
     const protege = Store.protege(state.controlProtegeId);
 
     // Auswahl + Aktionen
-    html += '<div class="mwrap"><div class="row-flex">';
+    html += '<div class="row-flex">';
     html += '<div>Schützling: <select id="ctlProtege">';
-    Store.proteges.forEach(pr => {
+    visible.forEach(pr => {
       html += '<option value="' + pr.id + '"' + (pr.id === protege.id ? ' selected' : '') + '>' + esc(pr.nick) + (pr.name ? ' (' + esc(pr.name) + ')' : '') + '</option>';
     });
     html += '</select></div>';
@@ -1945,6 +2175,12 @@
 
   function bindControlEvents(protege) {
     $('#ctlInternalOpen').on('click', openInternal);
+    $('#ctlCatFilter').on('change', function () {
+      state.controlCategory = $(this).val();
+      state.controlProtegeId = null; // wird in renderControl neu gesetzt
+      state.pending = []; state.message = null; state.browseResults = null;
+      render();
+    });
     $('#ctlProtege').on('change', function () {
       state.controlProtegeId = $(this).val();
       state.pending = []; state.message = null; state.browseResults = null; render();
@@ -2174,6 +2410,40 @@
   }
 
   /* ---- Tab: Statistik ---- */
+  /* ---- Tab: Changelog ---- */
+  function renderChangelog($body) {
+    // Welche Eintraege sind fuer diesen Nutzer neu? (vor dem Markieren merken)
+    const unseenIds = changelogUnseen().map(c => c.id);
+
+    let html = '<h3>📢 Changelog</h3>';
+    if (!CHANGELOG.length) {
+      html += '<div class="muted">Noch keine Einträge.</div>';
+      $body.html(html);
+      return;
+    }
+    html += '<div class="muted" style="margin-bottom:10px">Neuerungen und Änderungen am Mentoring.</div>';
+    CHANGELOG.forEach(c => {
+      const isNew = unseenIds.includes(c.id);
+      html += '<div class="mwrap" style="margin-bottom:10px">';
+      html += '<div class="row-flex" style="align-items:baseline">' +
+        '<b style="font-size:15px">' + esc(c.title) + '</b>' +
+        (isNew ? ' <span class="pill" style="background:#c0392b;color:#fff">NEU</span>' : '') +
+        '<span class="grow"></span>' +
+        '<span class="muted">' + esc(c.date) + '</span></div>';
+      html += '<div style="margin-top:6px">' + esc(c.text) + '</div>';
+      html += '</div>';
+    });
+    $body.html(html);
+
+    // Als gesehen markieren (Body zeigt "NEU" in diesem Durchgang noch), dann
+    // nur das Tab-Badge aktualisieren – so verschwindet die Kennzeichnung erst
+    // beim naechsten Aufruf.
+    if (unseenIds.length) {
+      changelogMarkAllSeen();
+      updateChangelogBadge();
+    }
+  }
+
   function renderStats($body) {
     let html = '<h3>📊 Statistik</h3>';
 
