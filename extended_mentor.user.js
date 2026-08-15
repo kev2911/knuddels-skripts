@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.31
+// @version      1.33
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
 // @require      https://code.jquery.com/jquery-3.3.1.min.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_info
+// @connect      raw.githubusercontent.com
 // @downloadURL  https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/extended_mentor.user.js
 // @updateURL    https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/extended_mentor.user.js
 // ==/UserScript==
@@ -644,6 +645,77 @@
         ontimeout: () => reject(new Error('Timeout'))
       });
     });
+  }
+
+  // Wie gmGet, aber ohne iso-8859-1 (fuer UTF-8/JSON, z.B. die Sperrliste).
+  function gmGetText(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET', url: url, timeout: 15000,
+        onload: r => resolve(r.responseText),
+        onerror: () => reject(new Error('Netzwerkfehler')),
+        ontimeout: () => reject(new Error('Timeout'))
+      });
+    });
+  }
+
+  /* ---- Zugriffsschutz (externe Sperrliste, Hash-basiert) ----
+     Die Sperrliste liegt separat im Repo (blocklist.json) und enthaelt NUR
+     SHA-256-Hashes (kein Klartext). Aenderungen an der Liste brauchen KEINE
+     neue Skript-Version. Ist die Liste nicht erreichbar, laeuft das Skript
+     normal weiter (bewusst "durchlassen"). */
+  const BLOCKLIST_URL = 'https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/blocklist.json';
+  // Allgemeiner Salt: MUSS in allen Skripten identisch sein, die dieselbe
+  // Blockliste nutzen (sonst passen die Hashes nicht zusammen).
+  const BLOCK_SALT = 'kn-block-v1';
+
+  // Liest den aktuell eingeloggten Nick aus der Seite ("Du bist eingeloggt als: <b>NICK</b>").
+  function getLoggedInUser() {
+    try {
+      const navi = document.getElementById('navi');
+      let el = navi && navi.nextElementSibling;
+      if (el && /eingeloggt als/i.test(el.textContent || '')) {
+        const b = el.querySelector('b');
+        if (b) return (b.textContent || '').trim();
+      }
+      const divs = document.querySelectorAll('div');
+      for (let i = 0; i < divs.length; i++) {
+        if (/Du bist eingeloggt als:/i.test(divs[i].textContent || '')) {
+          const b = divs[i].querySelector('b');
+          if (b) return (b.textContent || '').trim();
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  async function sha256Hex(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  function nickHash(nick) {
+    return sha256Hex(BLOCK_SALT + '|' + normalizeNick(nick));
+  }
+
+  // true = gesperrt. Bei jedem Fehler (kein Nick, Liste nicht erreichbar,
+  // ungueltiges JSON, kein crypto.subtle) -> false (durchlassen).
+  async function isBlockedUser() {
+    try {
+      const nick = getLoggedInUser();
+      if (!nick) return false;
+      if (!(window.crypto && crypto.subtle)) return false;
+      const hash = (await nickHash(nick)).toLowerCase();
+      let txt;
+      try {
+        txt = await gmGetText(BLOCKLIST_URL + '?t=' + Date.now());
+      } catch (e) { return false; } // nicht erreichbar -> durchlassen
+      let list;
+      try { list = JSON.parse(txt); } catch (e) { return false; }
+      if (!Array.isArray(list)) return false;
+      return list.map(x => String(x).trim().toLowerCase()).includes(hash);
+    } catch (e) {
+      return false;
+    }
   }
 
   function parseSearchRows(doc) {
@@ -2682,8 +2754,13 @@
     });
   }
 
-  function init() {
+  async function init() {
     Store.load();
+    // Stiller Zugriffsschutz: gesperrte Nutzer bauen das Mentoring nicht auf.
+    // Bei Nichterreichbarkeit der Sperrliste laeuft alles normal weiter.
+    try {
+      if (await isBlockedUser()) return;
+    } catch (e) { /* im Zweifel durchlassen */ }
     injectFont();
     injectStyles();
     buildShell();
