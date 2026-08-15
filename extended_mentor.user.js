@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.33
+// @version      1.34
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -258,6 +258,12 @@
   // Changelog-Eintraege (neueste zuerst). Jeder Eintrag braucht eine eindeutige
   // "id"; anhand dieser wird gemerkt, ob ein Nutzer den Eintrag schon gesehen hat.
   const CHANGELOG = [
+    {
+      id: '2026-08-16-eigene-seite',
+      date: '16.08.2026',
+      title: 'Mentoring jetzt als eigenständige Seite',
+      text: 'Das Mentoring öffnet sich ab sofort als eigene Seite mit eigener Adresse – nicht mehr als Popup-Fenster über der Meldeseite. Der Vorteil: Du kannst die Seite als Lesezeichen speichern, den Zurück-Button des Browsers verwenden und sie ganz normal neu laden, ohne dass etwas verloren geht. Ein Klick auf „Mentoring" in der Navigation bringt dich wie gewohnt direkt dorthin.'
+    },
     {
       id: '2026-07-19-kategorien',
       date: '19.07.2026',
@@ -558,6 +564,65 @@
     #mentorToastContainer .mt.show { transform:translateX(0); opacity:1; }
     #mentorToastContainer .mt.hide { transform:translateX(420px); opacity:0; }
     #mentorToastContainer .mt a { color:#cbb6ff; text-decoration:none; }
+
+    /* ---- Eigenstaendige Seite (kein Overlay) ----
+       Der aeussere Rahmen (#content) wird von Extended Admincall auf 1000px
+       gesetzt. Die Mentoring-Box darf deshalb NIE breiter sein als ihr
+       Container: width:100% + box-sizing:border-box (Padding liegt innen).
+       Zusaetzlich duerfen innere Elemente die Box nicht aufdruecken. */
+    /* Extended Admincall erzwingt "#main div{width:1000px; margin:auto}" fuer
+       ALLE divs - inklusive der inneren Boxen des Mentorings. Die Admincall-
+       Regel nutzt :not(#id) x5 -> Spezifitaet von 6 IDs! Ohne !important
+       verliert jede eigene Freigabe. Daher zwingend !important. */
+    #mentorRoot.mentorPageMode div {
+      width:auto !important; margin-left:0 !important; margin-right:0 !important;
+    }
+    /* Die Box selbst und der Body haben oben eigene, spaeter greifende
+       Breiten-Regeln (width:100% !important) - die bleiben erhalten, weil sie
+       spezifischer sind (.mentoringPage / .mentor-body) und ebenfalls !important. */
+    #mentorRoot.mentorPageMode {
+      position:static !important; display:block !important;
+      width:100% !important; max-width:100% !important; height:auto !important;
+      box-sizing:border-box !important; background:transparent !important;
+      overflow:visible !important; margin:0 !important; padding:0 !important;
+    }
+    #mentorRoot.mentorPageMode .mentoringPage {
+      display:block !important; box-sizing:border-box !important;
+      width:100% !important; max-width:100% !important; min-width:0 !important;
+      margin:14px 0 !important;
+      height:auto !important; min-height:0 !important; max-height:none !important;
+      overflow:hidden !important;   /* faengt Reste ab, ohne Hoehe zu begrenzen */
+      background: var(--bg); color: var(--text);
+      border:1px solid #888; border-radius:10px; padding:18px 22px;
+      font-family:"Dosis", sans-serif; line-height:1.4; font-size:14px;
+    }
+    #mentorRoot.mentorPageMode .mentor-head { display:flex; align-items:center; padding:4px 0 6px; }
+    #mentorRoot.mentorPageMode .mentor-tabs { flex-wrap:wrap; }
+    /* Body: kein flex:1, keine feste Hoehe, kein inneres Scrollen. Breite
+       strikt an den Rahmen gebunden, Padding innen. */
+    #mentorRoot.mentorPageMode .mentor-body {
+      flex:none !important; display:block !important; box-sizing:border-box !important;
+      width:100% !important; max-width:100% !important; min-width:0 !important;
+      height:auto !important; min-height:0 !important; max-height:none !important;
+      overflow-x:hidden !important; overflow-y:visible !important;
+    }
+    /* Innere Bloecke: nie breiter als der Body. Padding/Border zaehlen innen,
+       lange Inhalte brechen um statt zu ueberlaufen. */
+    #mentorRoot.mentorPageMode .mentor-body .mwrap,
+    #mentorRoot.mentorPageMode .mentor-body .typebox,
+    #mentorRoot.mentorPageMode .mentor-body .row-flex,
+    #mentorRoot.mentorPageMode .mentor-body table.mtab,
+    #mentorRoot.mentorPageMode .mentor-body textarea,
+    #mentorRoot.mentorPageMode .mentor-body pre {
+      box-sizing:border-box !important; max-width:100% !important; min-width:0 !important;
+    }
+    #mentorRoot.mentorPageMode .mentor-body .row-flex { flex-wrap:wrap; }
+    #mentorRoot.mentorPageMode .mentor-body table.mtab { table-layout:auto; word-break:break-word; }
+    #mentorRoot.mentorPageMode .mentor-body td,
+    #mentorRoot.mentorPageMode .mentor-body th { overflow-wrap:anywhere; }
+    /* Vorschau-iframe im Seiten-Modus: fuellt die Breite, kein fixer Wert */
+    #mentorRoot.mentorPageMode .mentor-body iframe.preview { width:100% !important; max-width:100% !important; box-sizing:border-box !important; }
+    #navi #mentorNavLink.mentorNavActive { font-weight:bold; text-decoration:underline; }
     `;
   }
 
@@ -1152,6 +1217,54 @@
     internal: null           // Interne Kontrolle (Ad-hoc): { nick,name,msLink,from,types,role,mode,count,results,texts,forumText,loading,loadingText }
   };
 
+  /* ---- Eigenstaendige Mentoring-Seite (echte URL statt Popup) ---- */
+
+  // Traegerseite: ac_admintoplist.pl (Topliste). WICHTIG: ac_start.pl ist
+  // ungeeignet, weil es bei einer aktiven Meldung serverseitig direkt zur
+  // Meldung weiterleitet - noch bevor das Skript laeuft. Die Topliste leitet
+  // nie weiter, ist immer erreichbar und loest keine Nebenwirkungen aus.
+  // (Extended Admincall nutzt aus demselben Grund diese Seite fuer seine
+  // Einstellungen: ac_admintoplist.pl?settings=1)
+  function mentoringPageUrl() {
+    return baseUri() + '/ac/ac_admintoplist.pl?d=knuddels.de&mentoring=1';
+  }
+  function isMentoringPage() {
+    try { return new URL(window.location).searchParams.get('mentoring') === '1'; }
+    catch (e) { return false; }
+  }
+
+  // Baut das Mentoring als vollwertigen Seiteninhalt (kein Overlay/Popup).
+  function renderMentoringPage() {
+    if (!isMentoringPage()) return;
+    ensureStyles();
+    const host = document.getElementById('content') || document.getElementById('main') || document.body;
+    const root = document.createElement('div');
+    root.id = 'mentorRoot';
+    root.className = 'mentor-' + currentTheme() + ' mentorPageMode';
+    root.innerHTML =
+      '<div class="mentoringPage">' +
+        '<div class="mentor-head"><h2>\uD83C\uDF93 Mentoring</h2></div>' +
+        '<div class="mentor-tabs">' +
+          '<div class="mentor-tab" data-tab="control">\uD83D\uDD0D Meldekontrolle</div>' +
+          '<div class="mentor-tab" data-tab="proteges">\uD83D\uDC65 Sch\u00fctzlinge</div>' +
+          '<div class="mentor-tab" data-tab="settings">\u2699\uFE0F Eigene Einstellungen</div>' +
+          '<div class="mentor-tab" data-tab="stats">\uD83D\uDCCA Statistik</div>' +
+          '<div class="mentor-tab" data-tab="changelog">\uD83D\uDCE2 Changelog<span id="clBadge"></span></div>' +
+        '</div>' +
+        '<div class="mentor-body" id="mentorBody"></div>' +
+      '</div>';
+    host.innerHTML = '';
+    host.appendChild(root);
+    $('#mentorRoot').on('click', '.mentor-tab', function () {
+      state.tab = $(this).data('tab'); render();
+    });
+    render();
+    // Anti-Flash aufheben: Inhalt wieder sichtbar
+    const hs = document.getElementById('mentorHideContent');
+    if (hs) hs.remove();
+    if (host.style) host.style.visibility = 'visible';
+  }
+
   function buildShell() {
     if (document.getElementById('mentorRoot')) return;
     const root = document.createElement('div');
@@ -1203,11 +1316,10 @@
     // Pipes. Daher: ein evtl. vorhandenes Trenner-Ende entfernen und genau einen
     // Separator setzen.
     let html = $navi.html().replace(/(\s*\|\s*)+$/, '');
-    $navi.html(html + ' | <a href="#" id="mentorNavLink">Mentoring</a>');
-
-    $(document).off('click.mentorNav').on('click.mentorNav', '#mentorNavLink', function (e) {
-      e.preventDefault(); openModal();
-    });
+    // Echter Link auf die eigenstaendige Mentoring-Seite (bookmarkbar, natives
+    // Zurueck/Neuladen). Bei aktivem Seiten-Modus wird der Link hervorgehoben.
+    const active = isMentoringPage() ? ' class="mentorNavActive"' : '';
+    $navi.html(html + ' | <a href="' + mentoringPageUrl() + '" id="mentorNavLink"' + active + '>Mentoring</a>');
   }
 
   /* ---- Render-Verteiler ---- */
@@ -2763,15 +2875,31 @@
     } catch (e) { /* im Zweifel durchlassen */ }
     injectFont();
     injectStyles();
-    buildShell();
+
+    // Eigenstaendige Mentoring-Seite (echte URL). Ersetzt den Seiteninhalt und
+    // fuehrt KEINE traegerseiten-spezifische Logik aus.
+    if (isMentoringPage()) {
+      addNavLink();
+      renderMentoringPage();
+      return;
+    }
+
+    // Normale /ac/-Seite: nur Navi-Link (fuehrt zur Mentoring-Seite) + Suche anreichern.
     addNavLink();
-    // Falls Extended Admincall die Navigation spaeter umbaut, Link erneut setzen
     setTimeout(addNavLink, 1500);
     setTimeout(addNavLink, 3500);
-    // Native Suchseite anreichern (mehrfach, falls die Seite spaeter umgebaut wird)
     augmentNativeSearch();
     setTimeout(augmentNativeSearch, 1200);
     setTimeout(augmentNativeSearch, 3000);
+  }
+
+  // Anti-Flash: im Seiten-Modus den urspruenglichen Inhalt sofort ausblenden,
+  // bevor init() laeuft (wird nach dem Rendern wieder eingeblendet).
+  if (isMentoringPage()) {
+    const hideStyle = document.createElement('style');
+    hideStyle.id = 'mentorHideContent';
+    hideStyle.textContent = '#content{visibility:hidden!important}';
+    (document.head || document.documentElement).appendChild(hideStyle);
   }
 
   if (document.readyState === 'loading') {
