@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.14
+// @version      1.15
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -12,6 +12,8 @@
 // @require      https://code.jquery.com/jquery-3.7.1.min.js
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -3264,8 +3266,73 @@ const chrome = {
         return;
     }
 
+    /* =========================================================================
+     *  Zugriffsschutz: externe Sperrliste (nur SHA-256-Hashes, kein Klartext).
+     *  Identische Werte wie im zweiten Skript – NICHT ändern, sonst passen die
+     *  Hashes nicht mehr zusammen. Bei jedem Fehler wird durchgelassen.
+     * ========================================================================= */
+    const BLOCKLIST_URL = 'https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/blocklist.json';
+    const BLOCK_SALT = 'kn-block-v1';
+
+    function gmGetText(url) {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest !== 'function') { reject(new Error('GM_xmlhttpRequest fehlt')); return; }
+            GM_xmlhttpRequest({
+                method: 'GET', url: url, timeout: 15000,
+                onload: r => resolve(r.responseText),
+                onerror: () => reject(new Error('Netzwerkfehler')),
+                ontimeout: () => reject(new Error('Timeout'))
+            });
+        });
+    }
+    function normalizeNick(n) { return (n || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+    function getLoggedInUser() {
+        try {
+            // Variante A (andere Knuddels-Seiten): div#navi + "Du bist eingeloggt als: <b>NICK</b>"
+            const navi = document.getElementById('navi');
+            let el = navi && navi.nextElementSibling;
+            if (el && /eingeloggt als/i.test(el.textContent || '')) {
+                const b = el.querySelector('b'); if (b) return (b.textContent || '').trim();
+            }
+            const divs = document.querySelectorAll('div');
+            for (let i = 0; i < divs.length; i++) {
+                if (/Du bist eingeloggt als:/i.test(divs[i].textContent || '')) {
+                    const b = divs[i].querySelector('b'); if (b) return (b.textContent || '').trim();
+                }
+            }
+            // Variante B (Fotoseiten photo.knuddels.de): Kopfzeile
+            // <div class="photo_logout"><a href="photos-profile.html">NICK</a> …
+            const a = document.querySelector('.photo_logout a[href*="photos-profile.html"]');
+            if (a) return (a.textContent || '').trim();
+        } catch (e) {}
+        return '';
+    }
+    async function sha256Hex(str) {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    function nickHash(nick) { return sha256Hex(BLOCK_SALT + '|' + normalizeNick(nick)); }
+
+    async function isBlockedUser() {
+        try {
+            const nick = getLoggedInUser();
+            if (!nick) return false;
+            if (!(window.crypto && crypto.subtle)) return false;
+            const hash = (await nickHash(nick)).toLowerCase();
+            let txt;
+            try { txt = await gmGetText(BLOCKLIST_URL + '?t=' + Date.now()); }
+            catch (e) { return false; }
+            let list;
+            try { list = JSON.parse(txt); } catch (e) { return false; }
+            if (!Array.isArray(list)) return false;
+            return list.map(x => String(x).trim().toLowerCase()).includes(hash);
+        } catch (e) { return false; }
+    }
+
     // Erst gespeicherte Einstellungen laden, dann starten
     (async () => {
+        // Zugriffsschutz ganz am Anfang: gesperrt -> still beenden (keine UI, keine Meldung)
+        try { if (await isBlockedUser()) return; } catch (e) { /* durchlassen */ }
         await Settings.load();
         const app = new PhotoAdministrationApp();
         app.init();
