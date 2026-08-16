@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.35
+// @version      1.36
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
 // @require      https://code.jquery.com/jquery-3.3.1.min.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_info
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      raw.githubusercontent.com
 // @downloadURL  https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/extended_mentor.user.js
 // @updateURL    https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/extended_mentor.user.js
@@ -764,24 +766,27 @@
 
   // true = gesperrt. Bei jedem Fehler (kein Nick, Liste nicht erreichbar,
   // ungueltiges JSON, kein crypto.subtle) -> false (durchlassen).
+  // true = gesperrt, false = frei, null = nicht pruefbar (Liste nicht erreichbar/
+  // ungueltig, kein Nick, kein crypto). null darf den Cache NICHT ueberschreiben.
   async function isBlockedUser() {
     try {
       const nick = getLoggedInUser();
-      if (!nick) return false;
-      if (!(window.crypto && crypto.subtle)) return false;
+      if (!nick) return null;
+      if (!(window.crypto && crypto.subtle)) return null;
       const hash = (await nickHash(nick)).toLowerCase();
       let txt;
       try {
         txt = await gmGetText(BLOCKLIST_URL + '?t=' + Date.now());
-      } catch (e) { return false; } // nicht erreichbar -> durchlassen
+      } catch (e) { return null; } // nicht erreichbar -> unbekannt
       let list;
-      try { list = JSON.parse(txt); } catch (e) { return false; }
-      if (!Array.isArray(list)) return false;
+      try { list = JSON.parse(txt); } catch (e) { return null; }
+      if (!Array.isArray(list)) return null;
       return list.map(x => String(x).trim().toLowerCase()).includes(hash);
     } catch (e) {
-      return false;
+      return null;
     }
   }
+
 
   function parseSearchRows(doc) {
     const rows = [];
@@ -2869,16 +2874,33 @@
   // Ergebnis der letzten Sperrpruefung merken (pro Nick), damit die Mentoring-
   // Seite beim naechsten Aufruf ohne Warten aufgebaut werden kann. Die Liste
   // wird trotzdem bei jedem Start im Hintergrund neu geprueft.
+  /* ---- Stale-While-Revalidate fuer die Sperrpruefung ----
+     Das zuletzt gespeicherte Ergebnis (pro Nick-Hash) entscheidet SOFORT,
+     ohne aufs Netzwerk zu warten; parallel wird die Liste frisch geladen und
+     das Ergebnis fuer den naechsten Start gespeichert. Nur beim allerersten
+     Start (noch kein Cache) wird kurz auf die Pruefung gewartet.
+     Speicher: GM_getValue/GM_setValue (skript-eigen, ueberlebt "Website-Daten
+     loeschen", fuer die Seite nicht lesbar). Fallback: localStorage. */
   const BLOCK_CACHE_KEY = 'mentorBlockCache';
-  function readBlockCache(nick) {
+  function gmGetJson(key) {
     try {
-      const c = JSON.parse(localStorage.getItem(BLOCK_CACHE_KEY) || 'null');
-      if (c && c.nick === normalizeNick(nick)) return c; // {nick, blocked, ts}
-    } catch (e) {}
-    return null;
+      if (typeof GM_getValue === 'function') { const v = GM_getValue(key, null); return v == null ? null : (typeof v === 'string' ? JSON.parse(v) : v); }
+      return JSON.parse(localStorage.getItem(key) || 'null');
+    } catch (e) { return null; }
   }
-  function writeBlockCache(nick, blocked) {
-    try { localStorage.setItem(BLOCK_CACHE_KEY, JSON.stringify({ nick: normalizeNick(nick), blocked: !!blocked, ts: Date.now() })); } catch (e) {}
+  function gmSetJson(key, obj) {
+    try {
+      const s = JSON.stringify(obj);
+      if (typeof GM_setValue === 'function') GM_setValue(key, s);
+      else localStorage.setItem(key, s);
+    } catch (e) {}
+  }
+  function readBlockCache(hash) {
+    const c = gmGetJson(BLOCK_CACHE_KEY);
+    return (c && c.hash === hash) ? c : null; // {hash, blocked, ts}
+  }
+  function writeBlockCache(hash, blocked) {
+    gmSetJson(BLOCK_CACHE_KEY, { hash: hash, blocked: !!blocked, ts: Date.now() });
   }
 
   // Alles vom Mentoring still wieder entfernen (Navi-Link, Seite, Suche-Marker).
@@ -2899,36 +2921,36 @@
     injectFont();
     injectStyles();
 
+    // Nick lesen + hashen (lokal, quasi sofort) und Cache nachsehen.
     const nick = getLoggedInUser();
-    const cache = nick ? readBlockCache(nick) : null;
+    let hash = '';
+    try { if (nick && window.crypto && crypto.subtle) hash = (await nickHash(nick)).toLowerCase(); } catch (e) {}
+    const cache = hash ? readBlockCache(hash) : null;
 
-    // Sperrpruefung laeuft IM HINTERGRUND. Der Navi-Link erscheint sofort und
-    // wird bei einem Treffer still wieder entfernt. So gibt es keinen sichtbaren
-    // Verzug durch den Netzwerk-Abruf der Sperrliste.
-    const check = isBlockedUser().then(blocked => {
-      if (nick) writeBlockCache(nick, blocked);
-      if (blocked) teardownMentoring();
-      return blocked;
-    }).catch(() => false);
+    // Revalidate: Liste im Hintergrund frisch holen, Ergebnis fuer den naechsten
+    // Start speichern. Sagt die frische Liste "gesperrt", wird sofort still
+    // abgeraeumt (bewusst strenger als "erst beim naechsten Laden").
+    const revalidate = isBlockedUser().then(res => {
+      if (res === null) return null;            // nicht pruefbar: Cache unangetastet
+      if (hash) writeBlockCache(hash, res);
+      if (res) teardownMentoring();
+      return res;
+    }).catch(() => null);
+
+    // Entscheiden: mit Cache sofort (stale), ohne Cache einmalig auf die
+    // Pruefung warten. Bei nicht erreichbarer Liste -> durchlassen.
+    let blocked;
+    if (cache) blocked = !!cache.blocked;
+    else blocked = (await revalidate) === true; // unbekannt -> durchlassen
+    if (blocked) return; // still beenden
 
     if (isMentoringPage()) {
-      // Seite: Inhalte sollen gesperrte Nutzer nicht zu sehen bekommen.
-      // - Cache sagt "nicht gesperrt": sofort aufbauen (Hintergrundpruefung
-      //   raeumt notfalls ab).
-      // - Cache sagt "gesperrt" oder kein Cache (erster Aufruf): kurz auf die
-      //   Pruefung warten, dann entscheiden.
       addNavLink();
-      if (cache && cache.blocked === false) {
-        renderMentoringPage();
-      } else {
-        const blocked = await check;
-        if (!blocked) renderMentoringPage();
-        else teardownMentoring();
-      }
+      renderMentoringPage();
       return;
     }
 
-    // Normale /ac/-Seite: Navi-Link sofort + Suche anreichern.
+    // Normale /ac/-Seite: Navi-Link + Suche anreichern.
     addNavLink();
     setTimeout(addNavLink, 1500);
     setTimeout(addNavLink, 3500);
