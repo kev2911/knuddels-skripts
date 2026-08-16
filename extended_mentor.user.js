@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.34
+// @version      1.35
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -2866,25 +2866,69 @@
     });
   }
 
+  // Ergebnis der letzten Sperrpruefung merken (pro Nick), damit die Mentoring-
+  // Seite beim naechsten Aufruf ohne Warten aufgebaut werden kann. Die Liste
+  // wird trotzdem bei jedem Start im Hintergrund neu geprueft.
+  const BLOCK_CACHE_KEY = 'mentorBlockCache';
+  function readBlockCache(nick) {
+    try {
+      const c = JSON.parse(localStorage.getItem(BLOCK_CACHE_KEY) || 'null');
+      if (c && c.nick === normalizeNick(nick)) return c; // {nick, blocked, ts}
+    } catch (e) {}
+    return null;
+  }
+  function writeBlockCache(nick, blocked) {
+    try { localStorage.setItem(BLOCK_CACHE_KEY, JSON.stringify({ nick: normalizeNick(nick), blocked: !!blocked, ts: Date.now() })); } catch (e) {}
+  }
+
+  // Alles vom Mentoring still wieder entfernen (Navi-Link, Seite, Suche-Marker).
+  function teardownMentoring() {
+    $('#mentorNavLink').remove();
+    $('#mentorRoot').remove();
+    $('.mentorNativeMarker').remove();
+    // Im Seiten-Modus den urspruenglichen Inhalt nicht mehr wiederherstellbar ->
+    // neutralen Hinweis stehen lassen (kein Klartext ueber Sperre).
+    if (isMentoringPage()) {
+      const host = document.getElementById('content');
+      if (host) host.innerHTML = '';
+    }
+  }
+
   async function init() {
     Store.load();
-    // Stiller Zugriffsschutz: gesperrte Nutzer bauen das Mentoring nicht auf.
-    // Bei Nichterreichbarkeit der Sperrliste laeuft alles normal weiter.
-    try {
-      if (await isBlockedUser()) return;
-    } catch (e) { /* im Zweifel durchlassen */ }
     injectFont();
     injectStyles();
 
-    // Eigenstaendige Mentoring-Seite (echte URL). Ersetzt den Seiteninhalt und
-    // fuehrt KEINE traegerseiten-spezifische Logik aus.
+    const nick = getLoggedInUser();
+    const cache = nick ? readBlockCache(nick) : null;
+
+    // Sperrpruefung laeuft IM HINTERGRUND. Der Navi-Link erscheint sofort und
+    // wird bei einem Treffer still wieder entfernt. So gibt es keinen sichtbaren
+    // Verzug durch den Netzwerk-Abruf der Sperrliste.
+    const check = isBlockedUser().then(blocked => {
+      if (nick) writeBlockCache(nick, blocked);
+      if (blocked) teardownMentoring();
+      return blocked;
+    }).catch(() => false);
+
     if (isMentoringPage()) {
+      // Seite: Inhalte sollen gesperrte Nutzer nicht zu sehen bekommen.
+      // - Cache sagt "nicht gesperrt": sofort aufbauen (Hintergrundpruefung
+      //   raeumt notfalls ab).
+      // - Cache sagt "gesperrt" oder kein Cache (erster Aufruf): kurz auf die
+      //   Pruefung warten, dann entscheiden.
       addNavLink();
-      renderMentoringPage();
+      if (cache && cache.blocked === false) {
+        renderMentoringPage();
+      } else {
+        const blocked = await check;
+        if (!blocked) renderMentoringPage();
+        else teardownMentoring();
+      }
       return;
     }
 
-    // Normale /ac/-Seite: nur Navi-Link (fuehrt zur Mentoring-Seite) + Suche anreichern.
+    // Normale /ac/-Seite: Navi-Link sofort + Suche anreichern.
     addNavLink();
     setTimeout(addNavLink, 1500);
     setTimeout(addNavLink, 3500);
