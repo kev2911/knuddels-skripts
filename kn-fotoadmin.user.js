@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.16
+// @version      1.17
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -3313,26 +3313,58 @@ const chrome = {
     }
     function nickHash(nick) { return sha256Hex(BLOCK_SALT + '|' + normalizeNick(nick)); }
 
-    async function isBlockedUser() {
+    // Frische Liste holen und im Cache (pro Nick-Hash) ablegen. Liefert das
+    // aktuelle Ergebnis zurück – oder null, wenn nicht ermittelbar (durchlassen).
+    async function fetchBlockedFresh(hash) {
+        try {
+            let txt;
+            try { txt = await gmGetText(BLOCKLIST_URL + '?t=' + Date.now()); }
+            catch (e) { return null; }
+            let list;
+            try { list = JSON.parse(txt); } catch (e) { return null; }
+            if (!Array.isArray(list)) return null;
+            const blocked = list.map(x => String(x).trim().toLowerCase()).includes(hash);
+            try { GM_setValue('blk_' + hash, blocked ? 1 : 0); } catch (e) {}
+            return blocked;
+        } catch (e) { return null; }
+    }
+
+    // Zugriffsschutz nach dem Muster „Stale-While-Revalidate":
+    //  1) sofort mit dem zuletzt gespeicherten Ergebnis (pro Nick-Hash) entscheiden
+    //     -> keine Wartezeit, kein Nachladen/Flackern der UI,
+    //  2) die frische Liste parallel im Hintergrund laden und den Cache
+    //     fürs NÄCHSTE Laden aktualisieren.
+    // Nur beim allerersten Aufruf (noch kein Cache) wird kurz auf das Netzwerk
+    // gewartet. Bei jedem Fehler wird durchgelassen.
+    async function isBlockedUserCached() {
         try {
             const nick = getLoggedInUser();
             if (!nick) return false;
             if (!(window.crypto && crypto.subtle)) return false;
             const hash = (await nickHash(nick)).toLowerCase();
-            let txt;
-            try { txt = await gmGetText(BLOCKLIST_URL + '?t=' + Date.now()); }
-            catch (e) { return false; }
-            let list;
-            try { list = JSON.parse(txt); } catch (e) { return false; }
-            if (!Array.isArray(list)) return false;
-            return list.map(x => String(x).trim().toLowerCase()).includes(hash);
+
+            let cached = null;
+            try {
+                const v = GM_getValue('blk_' + hash, null);
+                if (v === 1 || v === 0) cached = (v === 1);
+            } catch (e) {}
+
+            if (cached === null) {
+                // Erststart ohne Cache: einmalig auf die frische Liste warten
+                const fresh = await fetchBlockedFresh(hash);
+                return fresh === true; // null (Fehler) -> durchlassen
+            }
+
+            // Cache vorhanden -> sofort entscheiden, Liste nebenher aktualisieren
+            fetchBlockedFresh(hash);
+            return cached;
         } catch (e) { return false; }
     }
 
     // Erst gespeicherte Einstellungen laden, dann starten
     (async () => {
         // Zugriffsschutz ganz am Anfang: gesperrt -> still beenden (keine UI, keine Meldung)
-        try { if (await isBlockedUser()) return; } catch (e) { /* durchlassen */ }
+        try { if (await isBlockedUserCached()) return; } catch (e) { /* durchlassen */ }
         await Settings.load();
         const app = new PhotoAdministrationApp();
         app.init();
