@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.01
+// @version      1.02
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,10 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.02:
+// 1) Ungelesene Themen/Foren werden im Darkmode wieder deutlich markiert -
+//    erkannt am Icon (newposts/newfolder), nicht mehr am Hintergrund.
 
 // Neu in 1.01:
 // 1) Auslieferung über GitHub (updateURL/downloadURL), Icon und Namespace gesetzt.
@@ -26,9 +30,10 @@
 (function () {
     'use strict';
 
-    var STORAGE_KEY = 'kforum_theme';   // "light" | "dark"
-    var ROOT_CLASS  = 'kdark';          // Klasse am <html>-Element im Darkmode
-    var FIX_CLASS   = 'kforumLightFix'; // Marker für nachträglich abgedunkelte Flächen
+    var STORAGE_KEY  = 'kforum_theme';   // "light" | "dark"
+    var ROOT_CLASS   = 'kdark';          // Klasse am <html>-Element im Darkmode
+    var FIX_CLASS    = 'kforumLightFix'; // Marker für nachträglich abgedunkelte Flächen
+    var UNREAD_CLASS = 'kforumUnread';   // Marker für Zeilen mit ungelesenen Beiträgen
 
     /* ------------------------------------------------------------------
      *  Farbpalette - hier anpassen
@@ -237,6 +242,30 @@
     color: #FE9A2E !important;
 }
 
+/* Zeilen mit neuen Beiträgen: eigener Grundton + Balken links + kräftiger Titel.
+   Die Klasse setzt das Skript anhand des Icons (newposts/newfolder). */
+.${ROOT_CLASS} tr.${UNREAD_CLASS} > td {
+    background: #2b2440 !important;
+}
+
+.${ROOT_CLASS} tr.${UNREAD_CLASS} > td:first-child {
+    box-shadow: inset 4px 0 0 var(--k-accent);
+}
+
+.${ROOT_CLASS} tr.${UNREAD_CLASS} .topicsubject a,
+.${ROOT_CLASS} tr.${UNREAD_CLASS} .alt-topicsubject a,
+.${ROOT_CLASS} tr.${UNREAD_CLASS} .forumtitle > a,
+.${ROOT_CLASS} tr.${UNREAD_CLASS} h1 a {
+    color: #ffffff !important;
+    font-weight: 700 !important;
+}
+
+.${ROOT_CLASS} tr.${UNREAD_CLASS} .forumdescript,
+.${ROOT_CLASS} tr.${UNREAD_CLASS} .small,
+.${ROOT_CLASS} tr.${UNREAD_CLASS} .date {
+    color: #b9b3c9 !important;
+}
+
 .${ROOT_CLASS} .new,
 .${ROOT_CLASS} .newpost,
 .${ROOT_CLASS} .unread,
@@ -404,6 +433,38 @@
     }
 
     /* ------------------------------------------------------------------
+     *  Ungelesene Beiträge erkennen
+     *  Das Forum unterscheidet die Zeilen über das Icon: newposts.gif /
+     *  newfolder.gif = neu, nonewposts.gif / nonewfolder.gif = gelesen.
+     *  Das ist eindeutiger als die Hintergrundfarbe und funktioniert in
+     *  Kategorie-, Foren- und Themenlisten gleichermaßen.
+     * ----------------------------------------------------------------*/
+    function markUnreadRows() {
+        var content = document.getElementById('content');
+
+        if (!content)
+            return;
+
+        content.querySelectorAll('img').forEach(function (img) {
+            var file = (img.getAttribute('src') || '').split('/').pop().toLowerCase();
+            var hint = (img.getAttribute('title') || '') + ' ' + (img.getAttribute('alt') || '');
+            var unread = /^new(posts|folder)/.test(file);
+
+            // Zusatzweg über den Tooltip - "Keine neuen Beiträge" zählt nicht
+            if (!unread && /neue\s+beitr/i.test(hint) && !/keine/i.test(hint))
+                unread = true;
+
+            if (!unread)
+                return;
+
+            var row = img.closest('tr');
+
+            if (row)
+                row.classList.add(UNREAD_CLASS);
+        });
+    }
+
+    /* ------------------------------------------------------------------
      *  Nachbesserung: helle Restflächen finden
      *  Deckt Markierungen ab, die aus Stylesheets kommen, deren
      *  Klassennamen hier nicht bekannt sind.
@@ -545,6 +606,7 @@
         addStyle('kforumToggleStyle', toggleCss());
         reorderStyle();
         addButton();
+        markUnreadRows();
         fixLightSpots();
     }
 
