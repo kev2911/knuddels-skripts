@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.06
+// @version      1.07
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -12,9 +12,12 @@
 // @grant        none
 // ==/UserScript==
 
-// Neu in 1.06:
-// 1) HTML-Beiträge mit eigenem hellem Hintergrund behalten dunkle Schrift -
-//    vorher stand dort helle Schrift auf heller Fläche.
+// Neu in 1.07:
+// 1) Lesbarkeit in Beiträgen wird jetzt gemessen statt geraten: für jeden
+//    Text mit eigener Farbe wird der Kontrast zum tatsächlichen Hintergrund
+//    berechnet und nur bei Bedarf aufgehellt oder abgedunkelt. Damit sind
+//    auch UBBCode-Farben (<font color>) und HTML-Beiträge mit eigenem
+//    hellem Grund abgedeckt.
 
 // Neu in 1.05:
 // 1) Helle Eck-Grafiken der Kopf- und Fußleiste (.hdbox/.ftbox .l und .r)
@@ -509,27 +512,145 @@
 
     /* ------------------------------------------------------------------
      *  Beiträge mit eigenem Layout
-     *  Manche Beiträge bringen komplettes HTML samt eigener Farben mit.
-     *  Wo dort eine helle Fläche liegt, darf die Schrift nicht hell sein.
-     *  Der Hintergrund bleibt unangetastet - so sieht der Beitrag aus wie
-     *  von seinem Verfasser gedacht.
+     *  Manche Beiträge bringen komplettes HTML samt eigener Farben mit,
+     *  andere setzen Farben über UBBCode (<font color>). Statt einzelne
+     *  Farbwerte zu raten, wird hier der tatsächliche Kontrast gemessen
+     *  und nur dort nachgebessert, wo Text sonst unlesbar wäre.
+     *  Hintergründe bleiben unangetastet - der Beitrag sieht aus wie von
+     *  seinem Verfasser gedacht.
      * ----------------------------------------------------------------*/
+    var MIN_CONTRAST = 4.0;   // ab hier gilt Text als lesbar
+    var AIM_CONTRAST = 4.5;   // so weit wird nachgebessert
+
+    function parseRgb(value) {
+        var parts = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(value || '');
+
+        if (!parts)
+            return null;
+
+        return {
+            r: Number(parts[1]),
+            g: Number(parts[2]),
+            b: Number(parts[3]),
+            a: parts[4] === undefined ? 1 : parseFloat(parts[4])
+        };
+    }
+
+    // relative Helligkeit nach WCAG
+    function luminance(color) {
+        var channel = function (v) {
+            v = v / 255;
+            return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+        };
+
+        return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+    }
+
+    function contrast(a, b) {
+        var la = luminance(a);
+        var lb = luminance(b);
+
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+
+    function mix(from, to, amount) {
+        return {
+            r: Math.round(from.r + (to.r - from.r) * amount),
+            g: Math.round(from.g + (to.g - from.g) * amount),
+            b: Math.round(from.b + (to.b - from.b) * amount),
+            a: 1
+        };
+    }
+
+    // erste nicht durchsichtige Fläche über dem Element
+    function effectiveBackground(el) {
+        var node = el;
+
+        while (node && node.nodeType === 1) {
+            var color = parseRgb(getComputedStyle(node).backgroundColor);
+
+            if (color && color.a >= 0.5)
+                return color;
+
+            node = node.parentElement;
+        }
+
+        return parseRgb(COLORS.bg.replace('#', '').length === 6
+            ? 'rgb(28, 28, 28)'
+            : 'rgb(28, 28, 28)');
+    }
+
+    function skipTag(el) {
+        return el.tagName === 'IFRAME' || el.tagName === 'IMG' || el.tagName === 'BR'
+            || el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'TEMPLATE';
+    }
+
+    function ensureReadable(el) {
+        if (skipTag(el) || el.getAttribute('data-kforum-fixed'))
+            return;
+
+        var style = getComputedStyle(el);
+        var parent = el.parentElement;
+
+        // nur Elemente prüfen, die eine eigene Farbe mitbringen -
+        // geerbte Farben hat das Elternelement bereits geklärt
+        if (parent && getComputedStyle(parent).color === style.color)
+            return;
+
+        var text = parseRgb(style.color);
+        var background = effectiveBackground(el);
+
+        if (!text || !background || contrast(text, background) >= MIN_CONTRAST)
+            return;
+
+        // heller Grund -> Richtung Schwarz, dunkler Grund -> Richtung Weiß
+        var target = luminance(background) > 0.4
+            ? { r: 0, g: 0, b: 0 }
+            : { r: 255, g: 255, b: 255 };
+
+        var result = text;
+
+        for (var step = 0.15; step <= 1.001; step += 0.15) {
+            result = mix(text, target, step);
+
+            if (contrast(result, background) >= AIM_CONTRAST)
+                break;
+        }
+
+        el.style.setProperty('color', 'rgb(' + result.r + ', ' + result.g + ', ' + result.b + ')', 'important');
+        el.setAttribute('data-kforum-fixed', '1');
+    }
+
     function fixPostContrast() {
         if (theme !== 'dark')
             return;
 
         document.querySelectorAll('.post_inner').forEach(function (post) {
-            post.querySelectorAll('*').forEach(function (node) {
-                if (node.classList.contains(POST_CLASS))
-                    return;
+            var nodes = post.querySelectorAll('*');
 
-                // eingebettete Rahmen bringen ihr eigenes Dokument mit
-                if (node.tagName === 'IFRAME' || node.tagName === 'IMG')
+            // Erst die hellen Flächen markieren - davon hängt ab, welche
+            // Schriftfarbe die Kindelemente erben
+            nodes.forEach(function (node) {
+                if (skipTag(node) || node.classList.contains(POST_CLASS))
                     return;
 
                 if (isLight(getComputedStyle(node).backgroundColor))
                     node.classList.add(POST_CLASS);
             });
+
+            nodes.forEach(ensureReadable);
+        });
+    }
+
+    // beim Umschalten auf Light alle Eingriffe zurücknehmen
+    function clearPostContrast() {
+        document.querySelectorAll('[data-kforum-fixed]').forEach(function (node) {
+            node.style.removeProperty('color');
+            node.removeAttribute('data-kforum-fixed');
+        });
+
+        document.querySelectorAll('.' + POST_CLASS).forEach(function (node) {
+            node.classList.remove(POST_CLASS);
         });
     }
 
@@ -613,6 +734,8 @@
         }
         else {
             document.documentElement.classList.remove(ROOT_CLASS);
+
+            clearPostContrast();
 
             darkStyle?.remove();
             darkStyle = null;
