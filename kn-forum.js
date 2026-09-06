@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Knuddels Forum - Darkmode
+// @name         kn-forum
 // @namespace    https://forum.knuddels.de/
 // @version      1.01
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
