@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.08
+// @version      1.09
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,12 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.09:
+// 1) Innerhalb von Beiträgen wird keine Farbe mehr erzwungen (Überschriften,
+//    Tabellen, Links, Formularelemente) - dort entscheidet allein die
+//    Kontrastmessung. Beiträge mit eigenem CSS bleiben so erhalten.
+// 2) Stark abgeblendete Bereiche (opacity) werden angehoben.
 
 // Neu in 1.08:
 // 1) Kopfleiste dunkel statt weiß - Logo, Maskottchen und der rote Balken
@@ -196,15 +202,17 @@
 }
 
 /* --- Textfarbe ----------------------------------------------------
-   Nur auf Strukturelemente, damit Farben in Beiträgen erhalten bleiben. */
-.${ROOT_CLASS} td,
-.${ROOT_CLASS} th,
-.${ROOT_CLASS} li,
-.${ROOT_CLASS} label,
-.${ROOT_CLASS} h1,
-.${ROOT_CLASS} h2,
-.${ROOT_CLASS} h3,
-.${ROOT_CLASS} h4,
+   Nur auf Strukturelemente des Forums. Innerhalb von Beiträgen wird
+   nichts erzwungen - dort regelt die Kontrastmessung die Lesbarkeit,
+   damit eigenes CSS der Beiträge erhalten bleibt. */
+.${ROOT_CLASS} td:not(.post_inner *),
+.${ROOT_CLASS} th:not(.post_inner *),
+.${ROOT_CLASS} li:not(.post_inner *),
+.${ROOT_CLASS} label:not(.post_inner *),
+.${ROOT_CLASS} h1:not(.post_inner *),
+.${ROOT_CLASS} h2:not(.post_inner *),
+.${ROOT_CLASS} h3:not(.post_inner *),
+.${ROOT_CLASS} h4:not(.post_inner *),
 .${ROOT_CLASS} #content > div,
 .${ROOT_CLASS} #ft div,
 .${ROOT_CLASS} #ft li {
@@ -212,13 +220,13 @@
 }
 
 /* --- Links -------------------------------------------------------- */
-.${ROOT_CLASS} a,
-.${ROOT_CLASS} a:visited {
+.${ROOT_CLASS} a:not(.post_inner *),
+.${ROOT_CLASS} a:visited:not(.post_inner *) {
     color: var(--k-accent) !important;
     font-weight: bold;
 }
 
-.${ROOT_CLASS} a:hover { color: ${COLORS.linkHover} !important; }
+.${ROOT_CLASS} a:hover:not(.post_inner *) { color: ${COLORS.linkHover} !important; }
 
 /* Moderatoren-Nicks: #104e8b ist auf dunklem Grund nicht lesbar */
 .${ROOT_CLASS} .modname,
@@ -438,13 +446,15 @@
 /* Farbwähler behält seine Originalfarben */
 .${ROOT_CLASS} #colors-table td { background-image: none; }
 
-/* --- Formulare ---------------------------------------------------- */
-.${ROOT_CLASS} input[type="text"],
-.${ROOT_CLASS} input[type="password"],
-.${ROOT_CLASS} input[type="number"],
-.${ROOT_CLASS} input[type="search"],
-.${ROOT_CLASS} textarea,
-.${ROOT_CLASS} select {
+/* --- Formulare ----------------------------------------------------
+   Bedienelemente innerhalb von Beiträgen bleiben so, wie ihr Verfasser
+   sie gestaltet hat (z. B. eigene Reiter mit aktivem Zustand). */
+.${ROOT_CLASS} input[type="text"]:not(.post_inner *),
+.${ROOT_CLASS} input[type="password"]:not(.post_inner *),
+.${ROOT_CLASS} input[type="number"]:not(.post_inner *),
+.${ROOT_CLASS} input[type="search"]:not(.post_inner *),
+.${ROOT_CLASS} textarea:not(.post_inner *),
+.${ROOT_CLASS} select:not(.post_inner *) {
     background: var(--k-input) !important;
     color: var(--k-text) !important;
     border: 1px solid #444 !important;
@@ -453,10 +463,10 @@
 .${ROOT_CLASS} input[type="checkbox"],
 .${ROOT_CLASS} input[type="radio"] { accent-color: var(--k-accent); }
 
-.${ROOT_CLASS} input[type="submit"],
-.${ROOT_CLASS} input[type="button"],
-.${ROOT_CLASS} button,
-.${ROOT_CLASS} .form-button {
+.${ROOT_CLASS} input[type="submit"]:not(.post_inner *),
+.${ROOT_CLASS} input[type="button"]:not(.post_inner *),
+.${ROOT_CLASS} button:not(.post_inner *),
+.${ROOT_CLASS} .form-button:not(.post_inner *) {
     background: var(--k-accent) !important;
     color: #fff !important;
     border: 1px solid transparent !important;
@@ -466,10 +476,10 @@
     cursor: pointer;
 }
 
-.${ROOT_CLASS} input[type="submit"]:hover,
-.${ROOT_CLASS} input[type="button"]:hover,
-.${ROOT_CLASS} button:hover,
-.${ROOT_CLASS} .form-button:hover { background: rgba(175, 142, 232, 0.7) !important; }
+.${ROOT_CLASS} input[type="submit"]:hover:not(.post_inner *),
+.${ROOT_CLASS} input[type="button"]:hover:not(.post_inner *),
+.${ROOT_CLASS} button:hover:not(.post_inner *),
+.${ROOT_CLASS} .form-button:hover:not(.post_inner *) { background: rgba(175, 142, 232, 0.7) !important; }
 
 /* --- Sonstiges ---------------------------------------------------- */
 .${ROOT_CLASS} hr { border-color: #333 !important; }
@@ -607,6 +617,16 @@
             return;
 
         var style = getComputedStyle(el);
+
+        // Abgeblendete Bereiche (z. B. "inaktiv" mit opacity) verschwinden auf
+        // dunklem Grund fast völlig - etwas anheben, die Abstufung bleibt
+        var opacity = parseFloat(style.opacity);
+
+        if (opacity >= 0.1 && opacity < 0.75) {
+            el.style.setProperty('opacity', '0.85', 'important');
+            el.setAttribute('data-kforum-faded', '1');
+        }
+
         var parent = el.parentElement;
 
         // nur Elemente prüfen, die eine eigene Farbe mitbringen -
@@ -664,6 +684,11 @@
         document.querySelectorAll('[data-kforum-fixed]').forEach(function (node) {
             node.style.removeProperty('color');
             node.removeAttribute('data-kforum-fixed');
+        });
+
+        document.querySelectorAll('[data-kforum-faded]').forEach(function (node) {
+            node.style.removeProperty('opacity');
+            node.removeAttribute('data-kforum-faded');
         });
 
         document.querySelectorAll('.' + POST_CLASS).forEach(function (node) {
