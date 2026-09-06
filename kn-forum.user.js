@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.09
+// @version      1.10
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,10 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.10:
+// 1) Der Pfad (Forum » Kategorie » Thema) wird zusätzlich über der Fußzeile
+//    angezeigt - kein Hochscrollen mehr bei langen Themen.
 
 // Neu in 1.09:
 // 1) Innerhalb von Beiträgen wird keine Farbe mehr erzwungen (Überschriften,
@@ -734,6 +738,55 @@
     }
 
     /* ------------------------------------------------------------------
+     *  Pfad am Seitenende
+     *  Der Verlauf (Forum » Kategorie » Thema) steht nur ganz oben. Bei
+     *  langen Themen ist das weit weg, deshalb kommt er zusätzlich über
+     *  die Fußzeile. Aufbau mit den Forumsklassen, damit er in Light und
+     *  Dark genauso aussieht wie das Original.
+     * ----------------------------------------------------------------*/
+    function addBottomCrumbs() {
+        if (document.getElementById('kforumCrumbs'))
+            return;
+
+        var crumbs = document.querySelector('td.breadcrumbs');
+
+        if (!crumbs)
+            return;
+
+        var footerCell = document.querySelector('td.footer');
+        var anchor = footerCell ? footerCell.closest('table.t_outer') : null;
+
+        if (!anchor || !anchor.parentNode)
+            return;
+
+        var table = document.createElement('table');
+
+        table.id = 'kforumCrumbs';
+        table.className = 't_outer';
+        table.setAttribute('width', '100%');
+        table.setAttribute('cellpadding', '0');
+        table.setAttribute('cellspacing', '0');
+        table.style.marginBottom = '6px';
+
+        table.innerHTML = '<tr><td><table width="100%" class="t_inner" cellpadding="0" '
+                        + 'cellspacing="1"><tr><td class="breadcrumbs"></td></tr></table></td></tr>';
+
+        var target = table.querySelector('td.breadcrumbs');
+
+        target.innerHTML = crumbs.innerHTML;
+
+        // die Überschrift des Themas nicht ein zweites Mal als h1 ausgeben
+        target.querySelectorAll('h1').forEach(function (heading) {
+            var span = document.createElement('span');
+
+            span.innerHTML = heading.innerHTML;
+            heading.parentNode.replaceChild(span, heading);
+        });
+
+        anchor.parentNode.insertBefore(table, anchor);
+    }
+
+    /* ------------------------------------------------------------------
      *  Umschaltlogik
      * ----------------------------------------------------------------*/
     var theme = readTheme();
@@ -841,6 +894,7 @@
         addStyle('kforumToggleStyle', toggleCss());
         reorderStyle();
         addButton();
+        addBottomCrumbs();
         markUnreadRows();
         fixLightSpots();
         fixPostContrast();
