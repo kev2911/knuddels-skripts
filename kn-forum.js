@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Knuddels Forum - Darkmode
 // @namespace    https://forum.knuddels.de/
-// @version      1.11
+// @version      1.01
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -12,17 +12,15 @@
 // @grant        none
 // ==/UserScript==
 
-// Neu in 1.11:
+// Neu in 1.01:
 // 1) Auslieferung über GitHub (updateURL/downloadURL), Icon und Namespace gesetzt.
-
-// Neu in 1.10:
-// 1) Scrollbar-Styling entfernt - es hat auf jedem Element gegriffen und die
+// 2) Scrollbar-Styling entfernt - es hat auf jedem Element gegriffen und die
 //    Ecke (scrollbar-corner) hell stehen lassen. color-scheme: dark reicht.
-// 2) Automatik gegen helle Restflächen (z. B. Markierung ungelesener Beiträge),
+// 3) Automatik gegen helle Restflächen (z. B. Markierung ungelesener Beiträge),
 //    die aus Stylesheets kommen, die das Skript nicht kennt.
-// 3) Textfarbe wird nicht mehr pauschal auf alles gesetzt - Farben in
+// 4) Textfarbe wird nicht mehr pauschal auf alles gesetzt - Farben in
 //    Beiträgen bleiben erhalten.
-// 4) Regeln für die Zusatz-Styles im Seitenkopf (Notizzeilen, Profil-Werdegang,
+// 5) Regeln für die Zusatz-Styles im Seitenkopf (Notizzeilen, Profil-Werdegang,
 //    Statistiktabellen).
 
 (function () {
