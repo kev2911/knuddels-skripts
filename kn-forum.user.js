@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.04
+// @version      1.05
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,10 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.05:
+// 1) Helle Eck-Grafiken der Kopf- und Fußleiste (.hdbox/.ftbox .l und .r)
+//    ausgeblendet - sie standen als graue Balken in den unteren Ecken.
 
 // Neu in 1.04:
 // 1) updateURL/downloadURL auf kn-forum.user.js korrigiert - der alte Pfad
@@ -151,6 +155,20 @@
 }
 
 .${ROOT_CLASS} #yui-main-border .border { background: transparent !important; }
+
+/* Eck-Grafiken der Kopf-/Fußleiste: helle Bilder aus dem Original-Layout,
+   die im Darkmode als graue Balken in den unteren Ecken stehen bleiben */
+.${ROOT_CLASS} #khd .hdbox > .l,
+.${ROOT_CLASS} #khd .hdbox > .r,
+.${ROOT_CLASS} #kft .ftbox > .l,
+.${ROOT_CLASS} #kft .ftbox > .r,
+.${ROOT_CLASS} #kft .ftbox,
+.${ROOT_CLASS} #kft .ftoutside {
+    background-image: none !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+}
 
 /* --- Textfarbe ----------------------------------------------------
    Nur auf Strukturelemente, damit Farben in Beiträgen erhalten bleiben. */
