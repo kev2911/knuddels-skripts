@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.11
+// @version      1.12
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,11 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.12:
+// 1) Einstellungsfeld mit einklappbaren Bereichen, im Standard alles zu.
+//    Die Foren stehen jetzt nach Kategorien gruppiert, jede Kategorie ist
+//    eine eigene Klappbox mit eigenem Häkchen.
 
 // Neu in 1.11:
 // 1) Einstellungsfeld hinter dem Zahnrad neben dem Umschalter.
@@ -155,17 +160,33 @@
     text-align: left;
 }
 
-#kforumPanel .kforumSection {
+#kforumPanel details.kforumGroup { border-top: 1px solid rgba(128, 128, 128, 0.3); }
+#kforumPanel > details.kforumGroup:first-child { border-top: none; }
+
+#kforumPanel summary {
     display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin: 10px 0 5px;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 0;
     font-weight: bold;
-    font-size: 12px;
+    cursor: pointer;
+    list-style: none;
 }
 
-#kforumPanel .kforumSection:first-child { margin-top: 0; }
-#kforumPanel .kforumTools { font-weight: normal; font-size: 11px; }
+#kforumPanel summary::-webkit-details-marker { display: none; }
+
+#kforumPanel summary::before {
+    content: "\\203A";
+    display: inline-block;
+    font-size: 15px;
+    line-height: 1;
+    opacity: 0.7;
+    transition: transform 0.15s ease;
+}
+
+#kforumPanel details[open] > summary::before { transform: rotate(90deg); }
+#kforumPanel .kforumBody { padding: 0 0 8px 15px; }
+#kforumPanel .kforumTools { margin: 0 0 5px; font-size: 11px; }
 #kforumPanel .kforumTools a { color: ${COLORS.accent}; text-decoration: none; }
 #kforumPanel .kforumHint { margin: 0 0 7px; font-size: 11px; opacity: 0.75; line-height: 1.45; }
 
@@ -180,10 +201,8 @@
 }
 
 #kforumPanel input[type="checkbox"] { margin: 2px 0 0; accent-color: ${COLORS.accent}; }
-#kforumPanel .kforumDepth0 { font-weight: bold; margin-top: 6px; }
-#kforumPanel .kforumDepth1 { padding-left: 14px; }
-#kforumPanel .kforumDepth2 { padding-left: 28px; opacity: 0.9; }
-#kforumPanel .kforumDepth3 { padding-left: 42px; opacity: 0.85; }
+#kforumPanel .kforumDepth2 { padding-left: 14px; opacity: 0.9; }
+#kforumPanel .kforumDepth3 { padding-left: 28px; opacity: 0.85; }
 
 .${ROOT_CLASS} #kforumPanel {
     color: ${COLORS.text};
@@ -975,6 +994,27 @@
     /* ------------------------------------------------------------------
      *  Einstellungsfeld
      * ----------------------------------------------------------------*/
+    function makeBoardBox(board) {
+        var box = document.createElement('input');
+
+        box.type = 'checkbox';
+        box.checked = settings.hiddenBoards.indexOf(board.id) === -1;
+
+        box.addEventListener('change', function () {
+            var index = settings.hiddenBoards.indexOf(board.id);
+
+            if (box.checked && index !== -1)
+                settings.hiddenBoards.splice(index, 1);
+            else if (!box.checked && index === -1)
+                settings.hiddenBoards.push(board.id);
+
+            saveSettings();
+            applyBoardFilter();
+        });
+
+        return box;
+    }
+
     function renderBoardList(container) {
         container.innerHTML = '';
 
@@ -985,35 +1025,50 @@
             return;
         }
 
+        var body = null;
+
         boards.forEach(function (board) {
+            // Kategorie: eigene Klappbox, das Häkchen sitzt in der Überschrift
+            if (board.depth === 0) {
+                var group = document.createElement('details');
+
+                group.className = 'kforumGroup';
+
+                var summary = document.createElement('summary');
+                var box = makeBoardBox(board);
+
+                // Klick auf das Häkchen darf die Klappbox nicht öffnen
+                box.addEventListener('click', function (event) {
+                    event.stopPropagation();
+                });
+
+                var name = document.createElement('span');
+
+                name.textContent = board.name;
+
+                summary.appendChild(box);
+                summary.appendChild(name);
+                group.appendChild(summary);
+
+                body = document.createElement('div');
+                body.className = 'kforumBody';
+                group.appendChild(body);
+
+                container.appendChild(group);
+                return;
+            }
+
             var row = document.createElement('label');
 
             row.className = 'kforumBoard kforumDepth' + Math.min(board.depth, 3);
-
-            var box = document.createElement('input');
-
-            box.type = 'checkbox';
-            box.checked = settings.hiddenBoards.indexOf(board.id) === -1;
-
-            box.addEventListener('change', function () {
-                var index = settings.hiddenBoards.indexOf(board.id);
-
-                if (box.checked && index !== -1)
-                    settings.hiddenBoards.splice(index, 1);
-                else if (!box.checked && index === -1)
-                    settings.hiddenBoards.push(board.id);
-
-                saveSettings();
-                applyBoardFilter();
-            });
+            row.appendChild(makeBoardBox(board));
 
             var text = document.createElement('span');
 
             text.textContent = board.name;
-
-            row.appendChild(box);
             row.appendChild(text);
-            container.appendChild(row);
+
+            (body || container).appendChild(row);
         });
     }
 
@@ -1032,13 +1087,20 @@
         panel.style.display = 'none';
 
         panel.innerHTML =
-            '<div class="kforumSection">Anzeige</div>'
-          + '<label class="kforumOption"><input type="checkbox" id="kforumOptCrumbs">'
-          + '<span>Pfad auch am Seitenende</span></label>'
-          + '<div class="kforumSection">Foren<span class="kforumTools">'
-          + '<a href="#" id="kforumAll">alle</a> · <a href="#" id="kforumNone">keins</a></span></div>'
-          + '<div class="kforumHint">Abgewählte Foren verschwinden aus den Übersichten.</div>'
-          + '<div id="kforumBoards"></div>';
+            '<details class="kforumGroup kforumTop"><summary>Anzeige</summary>'
+          + '  <div class="kforumBody">'
+          + '    <label class="kforumOption"><input type="checkbox" id="kforumOptCrumbs">'
+          + '    <span>Pfad auch am Seitenende</span></label>'
+          + '  </div>'
+          + '</details>'
+          + '<details class="kforumGroup kforumTop"><summary>Foren</summary>'
+          + '  <div class="kforumBody">'
+          + '    <div class="kforumTools"><a href="#" id="kforumAll">alle</a> · '
+          + '    <a href="#" id="kforumNone">keins</a></div>'
+          + '    <div class="kforumHint">Abgewählte Foren verschwinden aus den Übersichten.</div>'
+          + '    <div id="kforumBoards"></div>'
+          + '  </div>'
+          + '</details>';
 
         var list = panel.querySelector('#kforumBoards');
         var crumbBox = panel.querySelector('#kforumOptCrumbs');
