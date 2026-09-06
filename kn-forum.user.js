@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.05
+// @version      1.06
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,10 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.06:
+// 1) HTML-Beiträge mit eigenem hellem Hintergrund behalten dunkle Schrift -
+//    vorher stand dort helle Schrift auf heller Fläche.
 
 // Neu in 1.05:
 // 1) Helle Eck-Grafiken der Kopf- und Fußleiste (.hdbox/.ftbox .l und .r)
@@ -42,6 +46,7 @@
     var ROOT_CLASS   = 'kdark';          // Klasse am <html>-Element im Darkmode
     var FIX_CLASS    = 'kforumLightFix'; // Marker für nachträglich abgedunkelte Flächen
     var UNREAD_CLASS = 'kforumUnread';   // Marker für Zeilen mit ungelesenen Beiträgen
+    var POST_CLASS   = 'kforumPostLight';// Marker für Beitragsflächen mit eigenem hellen Grund
 
     /* ------------------------------------------------------------------
      *  Farbpalette - hier anpassen
@@ -353,6 +358,22 @@
     color: var(--k-text) !important;
 }
 
+/* HTML-Beiträge mit eigenem hellen Hintergrund: dort bleibt die Schrift dunkel.
+   Die Klasse setzt das Skript, wenn ein Element im Beitrag selbst eine helle
+   Fläche mitbringt - sonst stünde helle Schrift auf hellem Grund. */
+.${ROOT_CLASS} .${POST_CLASS} {
+    color: #1a1a1a !important;
+}
+
+.${ROOT_CLASS} .${POST_CLASS} [style*="color: #000000"],
+.${ROOT_CLASS} .${POST_CLASS} [style*="color:#000000"],
+.${ROOT_CLASS} .${POST_CLASS} [style*="color: #000;"],
+.${ROOT_CLASS} .${POST_CLASS} [style*="color:#000;"],
+.${ROOT_CLASS} .${POST_CLASS} [style*="color: black"],
+.${ROOT_CLASS} .${POST_CLASS} [style*="color:black"] {
+    color: #1a1a1a !important;
+}
+
 /* --- Zusatz-Styles, die das Forum im Seitenkopf mitliefert -------- */
 .${ROOT_CLASS} .profile_career {
     background-color: var(--k-panel) !important;
@@ -487,6 +508,32 @@
     }
 
     /* ------------------------------------------------------------------
+     *  Beiträge mit eigenem Layout
+     *  Manche Beiträge bringen komplettes HTML samt eigener Farben mit.
+     *  Wo dort eine helle Fläche liegt, darf die Schrift nicht hell sein.
+     *  Der Hintergrund bleibt unangetastet - so sieht der Beitrag aus wie
+     *  von seinem Verfasser gedacht.
+     * ----------------------------------------------------------------*/
+    function fixPostContrast() {
+        if (theme !== 'dark')
+            return;
+
+        document.querySelectorAll('.post_inner').forEach(function (post) {
+            post.querySelectorAll('*').forEach(function (node) {
+                if (node.classList.contains(POST_CLASS))
+                    return;
+
+                // eingebettete Rahmen bringen ihr eigenes Dokument mit
+                if (node.tagName === 'IFRAME' || node.tagName === 'IMG')
+                    return;
+
+                if (isLight(getComputedStyle(node).backgroundColor))
+                    node.classList.add(POST_CLASS);
+            });
+        });
+    }
+
+    /* ------------------------------------------------------------------
      *  Nachbesserung: helle Restflächen finden
      *  Deckt Markierungen ab, die aus Stylesheets kommen, deren
      *  Klassennamen hier nicht bekannt sind.
@@ -562,6 +609,7 @@
                 darkStyle = addStyle('kforumDarkStyle', darkCss());
 
             fixLightSpots();
+            fixPostContrast();
         }
         else {
             document.documentElement.classList.remove(ROOT_CLASS);
@@ -630,6 +678,7 @@
         addButton();
         markUnreadRows();
         fixLightSpots();
+        fixPostContrast();
     }
 
     // Theme sofort setzen, damit beim Laden nichts weiß aufblitzt
