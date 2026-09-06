@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.03
+// @version      1.04
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -12,7 +12,7 @@
 // @grant        none
 // ==/UserScript==
 
-// Neu in 1.03:
+// Neu in 1.04:
 // 1) updateURL/downloadURL auf kn-forum.user.js korrigiert - der alte Pfad
 //    ohne .user lieferte nach dem Umbenennen 404, Updates kamen nie an.
 
