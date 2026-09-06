@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.07
+// @version      1.08
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,10 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.08:
+// 1) Kopfleiste dunkel statt weiß - Logo, Maskottchen und der rote Balken
+//    bleiben, nur ihre Fläche wechselt die Farbe.
 
 // Neu in 1.07:
 // 1) Lesbarkeit in Beiträgen wird jetzt gemessen statt geraten: für jeden
@@ -163,6 +167,19 @@
 }
 
 .${ROOT_CLASS} #yui-main-border .border { background: transparent !important; }
+
+/* Kopfleiste: die weiße Fläche rund um Logo und Maskottchen dunkel setzen.
+   Logo (.logo), Maskottchen (.mascot1/.mascot2) und der rote Balken (.hr)
+   bleiben unangetastet - nur ihr Untergrund wechselt. */
+.${ROOT_CLASS} #hd,
+.${ROOT_CLASS} #khd,
+.${ROOT_CLASS} #khd .hdbox,
+.${ROOT_CLASS} #khd .hdbox > .content {
+    background-color: var(--k-bg) !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    border: none !important;
+}
 
 /* Eck-Grafiken der Kopf-/Fußleiste: helle Bilder aus dem Original-Layout,
    die im Darkmode als graue Balken in den unteren Ecken stehen bleiben */
