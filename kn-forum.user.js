@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.10
+// @version      1.11
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,13 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.11:
+// 1) Einstellungsfeld hinter dem Zahnrad neben dem Umschalter.
+// 2) Pfad am Seitenende lässt sich dort abschalten (Standard: an).
+// 3) Forenfilter: alle zugänglichen Foren stehen zur Auswahl, abgewählte
+//    verschwinden aus den Übersichten. Die Liste stammt aus dem Auswahlfeld
+//    "gehe zu folgendem Forum" und wird gespeichert.
 
 // Neu in 1.10:
 // 1) Der Pfad (Forum » Kategorie » Thema) wird zusätzlich über der Fußzeile
@@ -93,17 +100,27 @@
      * ----------------------------------------------------------------*/
     function toggleCss() {
         return `
-#kforumToggle {
+#kforumBar {
     position: fixed;
     top: 10px;
     right: 12px;
     z-index: 99999;
     display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    font-family: Verdana, Arial, sans-serif;
+    font-size: 12px;
+}
+
+#kforumButtons { display: flex; gap: 6px; }
+
+#kforumToggle,
+#kforumSettingsBtn {
+    display: flex;
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    font-family: Verdana, Arial, sans-serif;
-    font-size: 12px;
     font-weight: bold;
     line-height: 1.4;
     color: #fff;
@@ -115,10 +132,64 @@
     user-select: none;
 }
 
-#kforumToggle:hover { background: rgba(175, 142, 232, 0.75); }
-#kforumToggle:active { background: rgba(175, 142, 232, 0.45); }
-#kforumToggle:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+#kforumSettingsBtn { padding: 4px 9px; font-size: 14px; }
+
+#kforumToggle:hover,
+#kforumSettingsBtn:hover { background: rgba(175, 142, 232, 0.75); }
+#kforumToggle:active,
+#kforumSettingsBtn:active { background: rgba(175, 142, 232, 0.45); }
+#kforumToggle:focus-visible,
+#kforumSettingsBtn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 #kforumToggle .kforumIcon { font-size: 14px; line-height: 1; }
+
+#kforumPanel {
+    width: 300px;
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: 10px 12px;
+    color: #1f2937;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    text-align: left;
+}
+
+#kforumPanel .kforumSection {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin: 10px 0 5px;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+#kforumPanel .kforumSection:first-child { margin-top: 0; }
+#kforumPanel .kforumTools { font-weight: normal; font-size: 11px; }
+#kforumPanel .kforumTools a { color: ${COLORS.accent}; text-decoration: none; }
+#kforumPanel .kforumHint { margin: 0 0 7px; font-size: 11px; opacity: 0.75; line-height: 1.45; }
+
+#kforumPanel .kforumOption,
+#kforumPanel .kforumBoard {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    padding: 3px 0;
+    line-height: 1.4;
+    cursor: pointer;
+}
+
+#kforumPanel input[type="checkbox"] { margin: 2px 0 0; accent-color: ${COLORS.accent}; }
+#kforumPanel .kforumDepth0 { font-weight: bold; margin-top: 6px; }
+#kforumPanel .kforumDepth1 { padding-left: 14px; }
+#kforumPanel .kforumDepth2 { padding-left: 28px; opacity: 0.9; }
+#kforumPanel .kforumDepth3 { padding-left: 42px; opacity: 0.85; }
+
+.${ROOT_CLASS} #kforumPanel {
+    color: ${COLORS.text};
+    background: ${COLORS.panel};
+    border-color: #000000;
+}
 `;
     }
 
@@ -787,6 +858,219 @@
     }
 
     /* ------------------------------------------------------------------
+     *  Einstellungen
+     * ----------------------------------------------------------------*/
+    var SETTINGS_KEY = 'kforum_settings';
+    var BOARDS_KEY   = 'kforum_boards';
+
+    var settings = { bottomCrumbs: true, hiddenBoards: [] };
+    var boards = [];
+
+    function loadSettings() {
+        try {
+            var stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+
+            if (typeof stored.bottomCrumbs === 'boolean')
+                settings.bottomCrumbs = stored.bottomCrumbs;
+
+            if (Array.isArray(stored.hiddenBoards))
+                settings.hiddenBoards = stored.hiddenBoards;
+        }
+        catch { /* Standardwerte behalten */ }
+
+        try { boards = JSON.parse(localStorage.getItem(BOARDS_KEY) || '[]') || []; }
+        catch { boards = []; }
+    }
+
+    function saveSettings() {
+        try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+        catch { /* Speicher nicht verfügbar */ }
+    }
+
+    /* ------------------------------------------------------------------
+     *  Forenliste
+     *  Quelle ist das Auswahlfeld "gehe zu folgendem Forum" - es enthält
+     *  genau die Foren, auf die der angemeldete Account Zugriff hat.
+     *  Einmal eingelesen, wird die Liste gespeichert und steht auch auf
+     *  Seiten ohne dieses Feld zur Verfügung.
+     * ----------------------------------------------------------------*/
+    function harvestBoards() {
+        var select = document.querySelector('select[name="board"]');
+
+        if (!select)
+            return;
+
+        var found = [];
+
+        select.querySelectorAll('option').forEach(function (option) {
+            var value = option.value || '';
+            var text = (option.textContent || '').replace(/\u00a0/g, ' ');
+            var indent = (text.match(/^ +/) || [''])[0].length;
+            var name = text.trim().replace(/\s*-{3,}\s*$/, '').trim();
+
+            if (!value || !name)
+                return;
+
+            found.push({
+                id: value.indexOf('c:') === 0 ? value.replace('c:', 'c:') : value,
+                name: name,
+                depth: value.indexOf('c:') === 0 ? 0 : Math.max(1, Math.floor(indent / 3))
+            });
+        });
+
+        if (!found.length)
+            return;
+
+        boards = found;
+
+        try { localStorage.setItem(BOARDS_KEY, JSON.stringify(boards)); }
+        catch { /* Speicher nicht verfügbar */ }
+    }
+
+    // Forums- bzw. Kategorie-Kennung aus einer Adresse lesen
+    function boardIdFromHref(href) {
+        if (!href)
+            return null;
+
+        var board = /[?&]Board=(\d+)/i.exec(href);
+
+        if (board)
+            return board[1];
+
+        var category = /[?&]c=(\d+)/i.exec(href);
+
+        if (category)
+            return 'c:' + category[1];
+
+        return null;
+    }
+
+    // abgewählte Foren aus den Listen nehmen
+    function applyBoardFilter() {
+        var hidden = settings.hiddenBoards || [];
+
+        document.querySelectorAll('#content td[class*="forumtitle"]').forEach(function (cell) {
+            var link = cell.querySelector('a[href]');
+            var row = cell.closest('tr');
+
+            if (!link || !row)
+                return;
+
+            var id = boardIdFromHref(link.getAttribute('href'));
+
+            if (!id)
+                return;
+
+            row.style.display = hidden.indexOf(id) !== -1 ? 'none' : '';
+        });
+
+        // Verweise auf Unterforen in den Zeilen darüber
+        document.querySelectorAll('#content .forum_extras a[href]').forEach(function (link) {
+            var id = boardIdFromHref(link.getAttribute('href'));
+
+            link.style.display = (id && hidden.indexOf(id) !== -1) ? 'none' : '';
+        });
+    }
+
+    /* ------------------------------------------------------------------
+     *  Einstellungsfeld
+     * ----------------------------------------------------------------*/
+    function renderBoardList(container) {
+        container.innerHTML = '';
+
+        if (!boards.length) {
+            container.innerHTML = '<div class="kforumHint">Noch keine Foren bekannt. '
+                                + 'Öffne einmal ein Forum oder ein Thema - dort liest das Skript '
+                                + 'die Liste aus dem Auswahlfeld am Seitenende ein.</div>';
+            return;
+        }
+
+        boards.forEach(function (board) {
+            var row = document.createElement('label');
+
+            row.className = 'kforumBoard kforumDepth' + Math.min(board.depth, 3);
+
+            var box = document.createElement('input');
+
+            box.type = 'checkbox';
+            box.checked = settings.hiddenBoards.indexOf(board.id) === -1;
+
+            box.addEventListener('change', function () {
+                var index = settings.hiddenBoards.indexOf(board.id);
+
+                if (box.checked && index !== -1)
+                    settings.hiddenBoards.splice(index, 1);
+                else if (!box.checked && index === -1)
+                    settings.hiddenBoards.push(board.id);
+
+                saveSettings();
+                applyBoardFilter();
+            });
+
+            var text = document.createElement('span');
+
+            text.textContent = board.name;
+
+            row.appendChild(box);
+            row.appendChild(text);
+            container.appendChild(row);
+        });
+    }
+
+    function setAllBoards(visible, container) {
+        settings.hiddenBoards = visible ? [] : boards.map(function (b) { return b.id; });
+
+        saveSettings();
+        renderBoardList(container);
+        applyBoardFilter();
+    }
+
+    function buildPanel() {
+        var panel = document.createElement('div');
+
+        panel.id = 'kforumPanel';
+        panel.style.display = 'none';
+
+        panel.innerHTML =
+            '<div class="kforumSection">Anzeige</div>'
+          + '<label class="kforumOption"><input type="checkbox" id="kforumOptCrumbs">'
+          + '<span>Pfad auch am Seitenende</span></label>'
+          + '<div class="kforumSection">Foren<span class="kforumTools">'
+          + '<a href="#" id="kforumAll">alle</a> · <a href="#" id="kforumNone">keins</a></span></div>'
+          + '<div class="kforumHint">Abgewählte Foren verschwinden aus den Übersichten.</div>'
+          + '<div id="kforumBoards"></div>';
+
+        var list = panel.querySelector('#kforumBoards');
+        var crumbBox = panel.querySelector('#kforumOptCrumbs');
+
+        crumbBox.checked = settings.bottomCrumbs;
+
+        crumbBox.addEventListener('change', function () {
+            settings.bottomCrumbs = crumbBox.checked;
+            saveSettings();
+
+            if (settings.bottomCrumbs)
+                addBottomCrumbs();
+            else
+                document.getElementById('kforumCrumbs')?.remove();
+        });
+
+        panel.querySelector('#kforumAll').addEventListener('click', function (event) {
+            event.preventDefault();
+            setAllBoards(true, list);
+        });
+
+        panel.querySelector('#kforumNone').addEventListener('click', function (event) {
+            event.preventDefault();
+            setAllBoards(false, list);
+        });
+
+        renderBoardList(list);
+
+        return panel;
+    }
+
+    /* ------------------------------------------------------------------
      *  Umschaltlogik
      * ----------------------------------------------------------------*/
     var theme = readTheme();
@@ -856,8 +1140,12 @@
     }
 
     function addButton() {
-        if (document.getElementById('kforumToggle'))
+        if (document.getElementById('kforumBar'))
             return;
+
+        var bar = document.createElement('div');
+
+        bar.id = 'kforumBar';
 
         var button = document.createElement('div');
 
@@ -879,7 +1167,37 @@
             }
         });
 
-        document.body.appendChild(button);
+        var gear = document.createElement('div');
+
+        gear.id = 'kforumSettingsBtn';
+        gear.setAttribute('role', 'button');
+        gear.setAttribute('tabindex', '0');
+        gear.title = 'Einstellungen';
+        gear.textContent = '\u2699';
+
+        var panel = buildPanel();
+
+        gear.addEventListener('click', function () {
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        });
+
+        gear.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                gear.click();
+            }
+        });
+
+        var row = document.createElement('div');
+
+        row.id = 'kforumButtons';
+        row.appendChild(button);
+        row.appendChild(gear);
+
+        bar.appendChild(row);
+        bar.appendChild(panel);
+
+        document.body.appendChild(bar);
 
         updateButton();
     }
@@ -891,10 +1209,17 @@
     }
 
     function start() {
+        loadSettings();
+        harvestBoards();
+
         addStyle('kforumToggleStyle', toggleCss());
         reorderStyle();
         addButton();
-        addBottomCrumbs();
+
+        if (settings.bottomCrumbs)
+            addBottomCrumbs();
+
+        applyBoardFilter();
         markUnreadRows();
         fixLightSpots();
         fixPostContrast();
