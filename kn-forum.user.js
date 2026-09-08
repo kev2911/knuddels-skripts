@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.14
+// @version      1.15
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -12,9 +12,11 @@
 // @grant        none
 // ==/UserScript==
 
-// Neu in 1.14:
-// 1) Ungelesene Beiträge in der Themenansicht werden gekennzeichnet:
-//    getönte Kopfzeile und Akzentbalken über den ganzen Beitrag.
+// Neu in 1.15:
+// 1) Ungelesene Beiträge in der Themenansicht werden zuverlässig erkannt -
+//    das Forum vergibt der Kopfzeile die Klasse "newsubjecttable"
+//    (im hellen Original der rote Balken). Kennzeichnung: kräftiger
+//    Akzentbalken links über Kopf- und Inhaltszeile, getönter Hintergrund.
 
 // Neu in 1.13:
 // 1) Ungelesene Themen werden auch dann erkannt, wenn sie angepinnt oder
@@ -444,19 +446,24 @@
     box-shadow: inset 3px 0 0 var(--k-accent);
 }
 
-/* Neue Beiträge in der Themenansicht: Kopfzeile getönt, Akzentbalken links
-   über den ganzen Beitrag, damit er sich beim Scrollen abhebt */
-.${ROOT_CLASS} tr.${NEWPOST_CLASS} > td.subjecttable {
-    background: #2b2440 !important;
-    box-shadow: inset 4px 0 0 var(--k-accent);
+/* Neue Beiträge in der Themenansicht: kräftiger Balken links über den ganzen
+   Beitrag, getönte Kopfzeile - im hellen Original ist das der rote Balken */
+.${ROOT_CLASS} tr.${NEWPOST_CLASS} > td.subjecttable,
+.${ROOT_CLASS} tr.${NEWPOST_CLASS} > td.newsubjecttable {
+    background: #33294d !important;
+    box-shadow: inset 5px 0 0 var(--k-accent);
 }
 
-.${ROOT_CLASS} tr.${NEWPOST_CLASS} > td.subjecttable > b {
+.${ROOT_CLASS} tr.${NEWPOST_CLASS} > td > b {
     color: #ffffff !important;
 }
 
+.${ROOT_CLASS} tr.${NEWBODY_CLASS} > td {
+    background: #241f33 !important;
+}
+
 .${ROOT_CLASS} tr.${NEWBODY_CLASS} > td:first-child {
-    box-shadow: inset 4px 0 0 rgba(175, 142, 232, 0.45);
+    box-shadow: inset 5px 0 0 var(--k-accent);
 }
 
 /* --- Navigation, Brotkrumen, Fußzeile ----------------------------- */
@@ -472,7 +479,8 @@
 }
 
 /* --- Beiträge ----------------------------------------------------- */
-.${ROOT_CLASS} td.subjecttable { background: var(--k-accent-soft) !important; }
+.${ROOT_CLASS} td.subjecttable,
+.${ROOT_CLASS} td.newsubjecttable { background: var(--k-accent-soft) !important; }
 
 .${ROOT_CLASS} td.author-content,
 .${ROOT_CLASS} td.post_top_link,
@@ -681,16 +689,21 @@
         if (!content)
             return;
 
-        content.querySelectorAll('td.subjecttable').forEach(function (cell) {
-            var fresh = false;
+        content.querySelectorAll('td.subjecttable, td.newsubjecttable').forEach(function (cell) {
+            // Das Forum vergibt für ungelesene Beiträge eine eigene Klasse -
+            // im hellen Original ist das der rote Balken
+            var fresh = cell.classList.contains('newsubjecttable')
+                     || !!cell.querySelector('#UNREAD');
 
-            cell.querySelectorAll('img').forEach(function (img) {
-                var file = (img.getAttribute('src') || '').split('/').pop().toLowerCase();
-                var hint = (img.getAttribute('alt') || '') + ' ' + (img.getAttribute('title') || '');
+            if (!fresh) {
+                cell.querySelectorAll('img').forEach(function (img) {
+                    var file = (img.getAttribute('src') || '').split('/').pop().toLowerCase();
+                    var hint = (img.getAttribute('alt') || '') + ' ' + (img.getAttribute('title') || '');
 
-                if (/^new/.test(file) || /\b(neu|new)\b/i.test(hint))
-                    fresh = true;
-            });
+                    if (/^new/.test(file) || /\b(neu|new)\b/i.test(hint))
+                        fresh = true;
+                });
+            }
 
             if (!fresh)
                 return;
