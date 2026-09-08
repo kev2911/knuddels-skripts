@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.12
+// @version      1.13
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,11 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.13:
+// 1) Ungelesene Themen werden auch dann erkannt, wenn sie angepinnt oder
+//    geschlossen sind. Das Forum kennzeichnet solche Zeilen über das
+//    Klassenpräfix "new-" (new-topicsubject ...), nicht über das Icon.
 
 // Neu in 1.12:
 // 1) Einstellungsfeld mit einklappbaren Bereichen, im Standard alles zu.
@@ -381,7 +386,8 @@
 .${ROOT_CLASS} tr:hover > td[class*="newinforum"],
 .${ROOT_CLASS} tr:hover > td[class*="threadtotal"],
 .${ROOT_CLASS} tr:hover > td[class*="posttotal"],
-.${ROOT_CLASS} tr:hover > td[class*="posttime"] {
+.${ROOT_CLASS} tr:hover > td[class*="posttime"],
+.${ROOT_CLASS} tr:hover > td.inline_selector {
     background: var(--k-accent-soft) !important;
 }
 
@@ -612,6 +618,18 @@
         if (!content)
             return;
 
+        // Weg 1: Klassen der Zellen. Ungelesene Zeilen tragen das Präfix
+        // "new-" (new-topicsubject, new-newintopic ...) statt "alt-" oder
+        // gar keinem. Das greift auch bei angepinnten und geschlossenen
+        // Themen, wo das Icon ein Schloss oder eine Pinnnadel ist.
+        content.querySelectorAll('td[class^="new-"], td[class*=" new-"]').forEach(function (cell) {
+            var row = cell.closest('tr');
+
+            if (row)
+                row.classList.add(UNREAD_CLASS);
+        });
+
+        // Weg 2: das Icon - deckt die Foren- und Kategorieübersichten ab
         content.querySelectorAll('img').forEach(function (img) {
             var file = (img.getAttribute('src') || '').split('/').pop().toLowerCase();
             var hint = (img.getAttribute('title') || '') + ' ' + (img.getAttribute('alt') || '');
