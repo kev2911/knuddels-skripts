@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.13
+// @version      1.14
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,10 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.14:
+// 1) Ungelesene Beiträge in der Themenansicht werden gekennzeichnet:
+//    getönte Kopfzeile und Akzentbalken über den ganzen Beitrag.
 
 // Neu in 1.13:
 // 1) Ungelesene Themen werden auch dann erkannt, wenn sie angepinnt oder
@@ -81,6 +85,8 @@
     var FIX_CLASS    = 'kforumLightFix'; // Marker für nachträglich abgedunkelte Flächen
     var UNREAD_CLASS = 'kforumUnread';   // Marker für Zeilen mit ungelesenen Beiträgen
     var POST_CLASS   = 'kforumPostLight';// Marker für Beitragsflächen mit eigenem hellen Grund
+    var NEWPOST_CLASS = 'kforumNewPost'; // Kopfzeile eines ungelesenen Beitrags
+    var NEWBODY_CLASS = 'kforumNewBody'; // zugehörige Inhaltszeile
 
     /* ------------------------------------------------------------------
      *  Farbpalette - hier anpassen
@@ -438,6 +444,21 @@
     box-shadow: inset 3px 0 0 var(--k-accent);
 }
 
+/* Neue Beiträge in der Themenansicht: Kopfzeile getönt, Akzentbalken links
+   über den ganzen Beitrag, damit er sich beim Scrollen abhebt */
+.${ROOT_CLASS} tr.${NEWPOST_CLASS} > td.subjecttable {
+    background: #2b2440 !important;
+    box-shadow: inset 4px 0 0 var(--k-accent);
+}
+
+.${ROOT_CLASS} tr.${NEWPOST_CLASS} > td.subjecttable > b {
+    color: #ffffff !important;
+}
+
+.${ROOT_CLASS} tr.${NEWBODY_CLASS} > td:first-child {
+    box-shadow: inset 4px 0 0 rgba(175, 142, 232, 0.45);
+}
+
 /* --- Navigation, Brotkrumen, Fußzeile ----------------------------- */
 .${ROOT_CLASS} td.navigation,
 .${ROOT_CLASS} div.navigation {
@@ -646,6 +667,46 @@
 
             if (row)
                 row.classList.add(UNREAD_CLASS);
+        });
+    }
+
+    /* ------------------------------------------------------------------
+     *  Neue Beiträge in der Themenansicht
+     *  Das Forum setzt im Beitragskopf ein kleines "NEW"-Bild. Daran
+     *  hängt die Kennzeichnung des ganzen Beitrags.
+     * ----------------------------------------------------------------*/
+    function markNewPosts() {
+        var content = document.getElementById('content');
+
+        if (!content)
+            return;
+
+        content.querySelectorAll('td.subjecttable').forEach(function (cell) {
+            var fresh = false;
+
+            cell.querySelectorAll('img').forEach(function (img) {
+                var file = (img.getAttribute('src') || '').split('/').pop().toLowerCase();
+                var hint = (img.getAttribute('alt') || '') + ' ' + (img.getAttribute('title') || '');
+
+                if (/^new/.test(file) || /\b(neu|new)\b/i.test(hint))
+                    fresh = true;
+            });
+
+            if (!fresh)
+                return;
+
+            var row = cell.closest('tr');
+
+            if (!row)
+                return;
+
+            row.classList.add(NEWPOST_CLASS);
+
+            // die folgende Zeile trägt Verfasser und Text desselben Beitrags
+            var body = row.nextElementSibling;
+
+            if (body && !body.querySelector('td.subjecttable'))
+                body.classList.add(NEWBODY_CLASS);
         });
     }
 
@@ -1301,6 +1362,7 @@
 
         applyBoardFilter();
         markUnreadRows();
+        markNewPosts();
         fixLightSpots();
         fixPostContrast();
     }
