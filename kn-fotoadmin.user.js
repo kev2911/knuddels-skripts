@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.17
+// @version      1.18
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -556,10 +556,34 @@ const chrome = {
             }
             const blob = await response.blob();
 
-            // Proxys in zufälliger Reihenfolge durchprobieren – bei 429/Fehler zum nächsten
+            // Breite Verify-Montagen (z. B. 1280×480 = zwei Frames nebeneinander)
+            // verwässern den Hive-Score, wenn man sie als Ganzes prüft. Daher das
+            // Bild selbst in Frames zerlegen und JEDEN prüfen – gemeldet wird der
+            // höchste ai_generated-Wert (der „reale" Wert). Nicht-breite Bilder
+            // (Profil/Album) liefern nur einen Frame -> Verhalten wie bisher.
+            let crops;
+            try { crops = await this.buildCrops(blob); }
+            catch (e) { crops = [{ name: 'full', blob }]; }
+
+            let best = { name: 'full', score: -1 };
+            let lastError = null;
+            for (const crop of crops) {
+                try {
+                    const score = await this.scoreBlob(crop.blob);
+                    if (score > best.score) best = { name: crop.name, score };
+                    if (best.score >= 0.9) break; // klarer Treffer – weitere Frames sparen
+                } catch (error) {
+                    lastError = error; // diesen Frame überspringen
+                }
+            }
+            if (best.score < 0) throw lastError || new Error('Alle Proxys fehlgeschlagen');
+            return { isAi: best.score, probability: best.score, region: best.name };
+        }
+
+        // Einen Bild-Blob über die Proxys an Hive schicken und den ai_generated-Score liefern
+        async scoreBlob(blob) {
             const proxies = this.proxyManager.shuffledProxies();
             let lastError = null;
-
             for (const proxy of proxies) {
                 try {
                     const formData = this.createFormData(blob); // pro Versuch neu (Body wird verbraucht)
@@ -570,13 +594,64 @@ const chrome = {
                     if (!apiResponse.ok) {
                         throw new Error(`Proxy/API status ${apiResponse.status}`);
                     }
-                    return this.processApiResponse(await apiResponse.json());
+                    return this.extractScore(await apiResponse.json());
                 } catch (error) {
                     lastError = error; // nächsten Proxy versuchen
                 }
             }
-
             throw lastError || new Error('Alle Proxys fehlgeschlagen');
+        }
+
+        // Zerlegt ein Bild in prüfbare Frames: immer das Gesamtbild, bei breiten
+        // Bildern zusätzlich die Hälften (2er-Montage) bzw. Drittel (3er-Montage).
+        buildCrops(blob) {
+            return new Promise((resolve, reject) => {
+                const url = URL.createObjectURL(blob);
+                const img = new Image();
+                img.onload = async () => {
+                    try {
+                        const w = img.naturalWidth, h = img.naturalHeight;
+                        const out = [{ name: 'full', blob }];
+                        const r = h > 0 ? w / h : 1;
+                        const rects = [];
+                        if (r >= 1.6) {
+                            rects.push(['L', 0, 0, w / 2, h], ['R', w / 2, 0, w / 2, h]);
+                        }
+                        if (r >= 2.3) {
+                            rects.push(['1', 0, 0, w / 3, h], ['2', w / 3, 0, w / 3, h], ['3', 2 * w / 3, 0, w / 3, h]);
+                        }
+                        for (const [name, sx, sy, sw, sh] of rects) {
+                            const b = await this.cropToBlob(img, sx, sy, sw, sh);
+                            if (b) out.push({ name, blob: b });
+                        }
+                        URL.revokeObjectURL(url);
+                        resolve(out);
+                    } catch (e) { URL.revokeObjectURL(url); reject(e); }
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Bild nicht ladbar')); };
+                img.src = url;
+            });
+        }
+
+        cropToBlob(img, sx, sy, sw, sh) {
+            return new Promise(resolve => {
+                try {
+                    const c = document.createElement('canvas');
+                    c.width = Math.max(1, Math.round(sw));
+                    c.height = Math.max(1, Math.round(sh));
+                    const ctx = c.getContext('2d');
+                    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+                    if (c.toBlob) {
+                        c.toBlob(b => resolve(b), 'image/jpeg', 0.92);
+                    } else {
+                        const d = c.toDataURL('image/jpeg', 0.92);
+                        const bin = atob(d.split(',')[1]);
+                        const arr = new Uint8Array(bin.length);
+                        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+                        resolve(new Blob([arr], { type: 'image/jpeg' }));
+                    }
+                } catch (e) { resolve(null); }
+            });
         }
 
         createFormData(blob) {
@@ -587,17 +662,16 @@ const chrome = {
             return data;
         }
 
-        processApiResponse(apiData) {
+        extractScore(apiData) {
             const classScores = {};
             apiData.data.classes.forEach(item => {
                 classScores[item.class] = item.score;
             });
-
             const score = classScores.ai_generated;
             if (typeof score !== 'number') {
                 throw new Error('Ungültige API-Antwort (kein ai_generated-Score)');
             }
-            return { isAi: score, probability: score };
+            return score;
         }
     }
 
