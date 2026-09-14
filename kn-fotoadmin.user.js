@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.19
+// @version      1.20
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -2817,7 +2817,7 @@ const chrome = {
                 .epa-row { padding:14px; display:flex; flex-direction:column; gap:12px; }
                 .epa-imgs { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; }
                 .epa-img { display:flex; flex-direction:column; gap:5px; position:relative; }
-                .epa-split-btn { position:absolute; top:6px; right:6px; z-index:6; width:26px; height:26px;
+                .epa-split-btn { position:absolute; top:6px; left:6px; z-index:1001; width:26px; height:26px;
                     border:none; border-radius:6px; background:rgba(15,23,42,.72); color:#fff;
                     font-size:14px; line-height:26px; text-align:center; padding:0; cursor:pointer; }
                 .epa-split-btn:hover { background:#e11d48; }
