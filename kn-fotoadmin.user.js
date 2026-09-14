@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.22
+// @version      1.23
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -454,8 +454,10 @@ const chrome = {
             let $img = block.find('.photo_cell.new_photo .userimage').first();
             if (!$img.length) $img = block.find('.userimage').first();
             if (!$img.length) return;
-            const $cell = $img.closest('.photo_cell');
-            const $host = $cell.length ? $cell : $img.parent();
+            // WICHTIG: an das Bild(-Anker) hängen, NICHT an die ganze .photo_cell –
+            // sonst liegt die Schere über der Kopfzeile (Yandex|Google|Bot|Scam|Admin).
+            const $anchor = $img.closest('a');
+            const $host = $anchor.length ? $anchor : $img.parent();
             if (!$host.length || $host.find('.epa-split-btn').length) return;
 
             const rx = /\.(jpe?g|png|webp|gif)(\?|$)/i;
@@ -464,7 +466,7 @@ const chrome = {
             if (!url) return;
             try { url = new URL(url, document.baseURI).href; } catch (e) { /* relativ belassen */ }
 
-            $host.css('position', 'relative');
+            $host.css('position', 'relative').css('display', 'inline-block');
             const $sc = $('<button type="button" class="epa-split-btn" title="Bild manuell in zwei Hälften zerlegen">\u2702</button>');
             $sc.on('click', function (e) {
                 e.preventDefault(); e.stopPropagation();
