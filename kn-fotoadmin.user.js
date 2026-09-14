@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.18
+// @version      1.19
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -614,7 +614,7 @@ const chrome = {
                         const out = [{ name: 'full', blob }];
                         const r = h > 0 ? w / h : 1;
                         const rects = [];
-                        if (r >= 1.6) {
+                        if (r >= 1.4) {
                             rects.push(['L', 0, 0, w / 2, h], ['R', w / 2, 0, w / 2, h]);
                         }
                         if (r >= 2.3) {
@@ -2408,7 +2408,111 @@ const chrome = {
                 else $cap.text(label);
                 $b.append($cap);
             }
+            // Schere: Bild manuell in zwei Hälften zerlegen und je Hälfte separat öffnen
+            if (isMain && imgUrl) {
+                const $sc = $('<button type="button" class="epa-split-btn" title="Bild manuell in zwei Hälften zerlegen">\u2702</button>');
+                $sc.on('click', function (e) {
+                    e.preventDefault(); e.stopPropagation();
+                    NewLayout.openSplitTool(imgUrl);
+                });
+                $b.append($sc);
+            }
             return $b;
+        }
+
+        // Split-Werkzeug: Overlay mit verschiebbarer Trennlinie; öffnet jede Hälfte
+        // als eigenes Bild in einem neuen Tab (dann manuell durch Hive prüfbar).
+        static splitStyles() {
+            if ($('#epa-split-styles').length) return;
+            const css = `
+                #epa-split-ov { position:fixed; inset:0; z-index:2147483000; background:rgba(15,23,42,.82);
+                    display:flex; align-items:center; justify-content:center; }
+                #epa-split-box { background:#fff; border-radius:10px; padding:14px; max-width:92vw; max-height:92vh;
+                    display:flex; flex-direction:column; gap:10px; box-shadow:0 10px 40px rgba(0,0,0,.4); }
+                #epa-split-box h4 { margin:0; font:600 15px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; color:#0f172a; }
+                #epa-split-hint { margin:0; font:12px system-ui,sans-serif; color:#475569; }
+                #epa-split-stage { position:relative; display:inline-block; max-width:86vw; max-height:66vh;
+                    overflow:hidden; touch-action:none; user-select:none; align-self:center; }
+                #epa-split-stage img { display:block; max-width:86vw; max-height:66vh; pointer-events:none; }
+                #epa-split-line { position:absolute; top:0; bottom:0; width:2px; background:#e11d48; left:50%;
+                    transform:translateX(-1px); cursor:ew-resize; box-shadow:0 0 0 1px rgba(255,255,255,.75); }
+                #epa-split-line::after { content:""; position:absolute; top:50%; left:50%; width:16px; height:28px;
+                    transform:translate(-50%,-50%); background:#e11d48; border-radius:4px; box-shadow:0 0 0 2px #fff; }
+                #epa-split-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+                #epa-split-pct { font:600 12px system-ui,sans-serif; color:#334155; margin-right:auto; }
+                #epa-split-actions button { font:600 13px system-ui,sans-serif; padding:7px 12px; border-radius:6px;
+                    border:1px solid #cbd5e1; background:#f8fafc; color:#0f172a; cursor:pointer; }
+                #epa-split-actions .epa-split-primary { background:#2563eb; border-color:#2563eb; color:#fff; }
+            `;
+            $('<style id="epa-split-styles">').text(css).appendTo('head');
+        }
+
+        static openSplitTool(url) {
+            NewLayout.splitStyles();
+            const img = new Image();
+            img.onload = function () {
+                const W = img.naturalWidth, H = img.naturalHeight;
+                let frac = 0.5;
+
+                const $ov = $('<div id="epa-split-ov"></div>');
+                const $box = $('<div id="epa-split-box"></div>');
+                $box.append('<h4>Bild zerlegen</h4>');
+                $box.append('<p id="epa-split-hint">Trennlinie an die Bildkante ziehen, dann jede Hälfte einzeln öffnen und durch Hive prüfen.</p>');
+                const $stage = $('<div id="epa-split-stage"></div>');
+                const $im = $('<img alt="">').attr('src', url);
+                const $line = $('<div id="epa-split-line"></div>');
+                $stage.append($im).append($line);
+                const $actions = $('<div id="epa-split-actions"></div>');
+                const $pct = $('<span id="epa-split-pct"></span>');
+                const $left = $('<button type="button">Linke Hälfte öffnen</button>');
+                const $right = $('<button type="button">Rechte Hälfte öffnen</button>');
+                const $both = $('<button type="button" class="epa-split-primary">Beide öffnen</button>');
+                const $close = $('<button type="button">Schließen</button>');
+                $actions.append($pct, $left, $right, $both, $close);
+                $box.append($stage, $actions);
+                $ov.append($box).appendTo('body');
+
+                function setFrac(f) {
+                    frac = Math.min(0.95, Math.max(0.05, f));
+                    $line.css('left', (frac * 100) + '%');
+                    $pct.text('Trennung bei ' + Math.round(frac * 100) + '%');
+                }
+                setFrac(0.5);
+
+                let dragging = false;
+                function posFromEvent(e) {
+                    const rect = $im[0].getBoundingClientRect();
+                    const cx = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+                    setFrac((cx - rect.left) / rect.width);
+                }
+                $line.on('mousedown touchstart', function (e) { dragging = true; e.preventDefault(); });
+                $stage.on('mousedown touchstart', function (e) { dragging = true; posFromEvent(e); });
+                $(document).on('mousemove.epasplit touchmove.epasplit', function (e) { if (dragging) posFromEvent(e); });
+                $(document).on('mouseup.epasplit touchend.epasplit', function () { dragging = false; });
+
+                function openSide(side) {
+                    const splitX = Math.round(frac * W);
+                    const sx = side === 'L' ? 0 : splitX;
+                    const sw = side === 'L' ? splitX : (W - splitX);
+                    if (sw < 1) return;
+                    const c = document.createElement('canvas');
+                    c.width = sw; c.height = H;
+                    c.getContext('2d').drawImage(img, sx, 0, sw, H, 0, 0, sw, H);
+                    const done = function (u) { window.open(u, '_blank'); };
+                    if (c.toBlob) c.toBlob(function (b) { done(URL.createObjectURL(b)); }, 'image/jpeg', 0.95);
+                    else done(c.toDataURL('image/jpeg', 0.95));
+                }
+                $left.on('click', function () { openSide('L'); });
+                $right.on('click', function () { openSide('R'); });
+                $both.on('click', function () { openSide('L'); setTimeout(function () { openSide('R'); }, 200); });
+
+                function close() { $(document).off('.epasplit'); $(document).off('keydown.epasplitesc'); $ov.remove(); }
+                $close.on('click', close);
+                $ov.on('click', function (e) { if (e.target === $ov[0]) close(); });
+                $(document).on('keydown.epasplitesc', function (e) { if (e.key === 'Escape') close(); });
+            };
+            img.onerror = function () { window.alert('Bild konnte nicht geladen werden.'); };
+            img.src = url;
         }
 
         static headNode($info) {
@@ -2712,7 +2816,11 @@ const chrome = {
                     box-shadow:0 1px 3px rgba(0,0,0,.06); }
                 .epa-row { padding:14px; display:flex; flex-direction:column; gap:12px; }
                 .epa-imgs { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; }
-                .epa-img { display:flex; flex-direction:column; gap:5px; }
+                .epa-img { display:flex; flex-direction:column; gap:5px; position:relative; }
+                .epa-split-btn { position:absolute; top:6px; right:6px; z-index:6; width:26px; height:26px;
+                    border:none; border-radius:6px; background:rgba(15,23,42,.72); color:#fff;
+                    font-size:14px; line-height:26px; text-align:center; padding:0; cursor:pointer; }
+                .epa-split-btn:hover { background:#e11d48; }
                 .epa-img-frame { display:block; line-height:0; border-radius:10px; overflow:hidden;
                     background:#f3f4f6; position:relative; }
                 .epa-img-frame .ai-image-wrapper { display:block !important; position:relative; }
