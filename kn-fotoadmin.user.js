@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.20
+// @version      1.21
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -2457,18 +2457,19 @@ const chrome = {
                 const $ov = $('<div id="epa-split-ov"></div>');
                 const $box = $('<div id="epa-split-box"></div>');
                 $box.append('<h4>Bild zerlegen</h4>');
-                $box.append('<p id="epa-split-hint">Trennlinie an die Bildkante ziehen, dann jede Hälfte einzeln öffnen und durch Hive prüfen.</p>');
+                $box.append('<p id="epa-split-hint">Trennlinie an die Bildkante ziehen, dann jede Hälfte <b>speichern</b> und die Datei per Drag &amp; Drop in Hive prüfen. („Öffnen" dient nur zum Ansehen – ein geöffneter Browser-Tab lässt sich nicht direkt durch Hive prüfen.)</p>');
                 const $stage = $('<div id="epa-split-stage"></div>');
                 const $im = $('<img alt="">').attr('src', url);
                 const $line = $('<div id="epa-split-line"></div>');
                 $stage.append($im).append($line);
                 const $actions = $('<div id="epa-split-actions"></div>');
                 const $pct = $('<span id="epa-split-pct"></span>');
-                const $left = $('<button type="button">Linke Hälfte öffnen</button>');
-                const $right = $('<button type="button">Rechte Hälfte öffnen</button>');
-                const $both = $('<button type="button" class="epa-split-primary">Beide öffnen</button>');
+                const $saveL = $('<button type="button" class="epa-split-primary">Links speichern</button>');
+                const $saveR = $('<button type="button" class="epa-split-primary">Rechts speichern</button>');
+                const $left = $('<button type="button">Links öffnen</button>');
+                const $right = $('<button type="button">Rechts öffnen</button>');
                 const $close = $('<button type="button">Schließen</button>');
-                $actions.append($pct, $left, $right, $both, $close);
+                $actions.append($pct, $saveL, $saveR, $left, $right, $close);
                 $box.append($stage, $actions);
                 $ov.append($box).appendTo('body');
 
@@ -2490,7 +2491,8 @@ const chrome = {
                 $(document).on('mousemove.epasplit touchmove.epasplit', function (e) { if (dragging) posFromEvent(e); });
                 $(document).on('mouseup.epasplit touchend.epasplit', function () { dragging = false; });
 
-                function openSide(side) {
+                // Erzeugt die gewählte Hälfte als Blob und übergibt eine Objekt-URL
+                function halfUrl(side, cb) {
                     const splitX = Math.round(frac * W);
                     const sx = side === 'L' ? 0 : splitX;
                     const sw = side === 'L' ? splitX : (W - splitX);
@@ -2498,13 +2500,25 @@ const chrome = {
                     const c = document.createElement('canvas');
                     c.width = sw; c.height = H;
                     c.getContext('2d').drawImage(img, sx, 0, sw, H, 0, 0, sw, H);
-                    const done = function (u) { window.open(u, '_blank'); };
-                    if (c.toBlob) c.toBlob(function (b) { done(URL.createObjectURL(b)); }, 'image/jpeg', 0.95);
-                    else done(c.toDataURL('image/jpeg', 0.95));
+                    if (c.toBlob) c.toBlob(function (b) { cb(URL.createObjectURL(b)); }, 'image/jpeg', 0.95);
+                    else cb(c.toDataURL('image/jpeg', 0.95));
                 }
+                function openSide(side) { halfUrl(side, function (u) { window.open(u, '_blank'); }); }
+                // Als echte Datei speichern -> per Drag&Drop in Hive prüfbar
+                function saveSide(side) {
+                    halfUrl(side, function (u) {
+                        const a = document.createElement('a');
+                        a.href = u;
+                        a.download = 'haelfte-' + (side === 'L' ? 'links' : 'rechts') + '.jpg';
+                        document.body.appendChild(a);
+                        a.click();
+                        setTimeout(function () { a.remove(); }, 100);
+                    });
+                }
+                $saveL.on('click', function () { saveSide('L'); });
+                $saveR.on('click', function () { saveSide('R'); });
                 $left.on('click', function () { openSide('L'); });
                 $right.on('click', function () { openSide('R'); });
-                $both.on('click', function () { openSide('L'); setTimeout(function () { openSide('R'); }, 200); });
 
                 function close() { $(document).off('.epasplit'); $(document).off('keydown.epasplitesc'); $ov.remove(); }
                 $close.on('click', close);
