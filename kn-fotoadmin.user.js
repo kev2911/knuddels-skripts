@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.21
+// @version      1.22
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -341,6 +341,7 @@ const chrome = {
                 if (!Utils.isCurrentPage(Config.URLS.VERIFY_CONTROL)) {
                     AdminActions.addReportUnderImage(block, name);
                 }
+                AdminActions.addSplitButton(block);
             });
 
             // Nick/Alter-Zeile: Klick auf den Kasten kopiert „/w +NICK" (wie im neuen Layout)
@@ -448,6 +449,30 @@ const chrome = {
         }
 
         // Lila „Melden"-Button direkt unter dem (zu prüfenden) Bild – meldet im Hintergrund
+        // Schere im klassischen Layout: kleines ✂ auf dem zu prüfenden Bild
+        static addSplitButton(block) {
+            let $img = block.find('.photo_cell.new_photo .userimage').first();
+            if (!$img.length) $img = block.find('.userimage').first();
+            if (!$img.length) return;
+            const $cell = $img.closest('.photo_cell');
+            const $host = $cell.length ? $cell : $img.parent();
+            if (!$host.length || $host.find('.epa-split-btn').length) return;
+
+            const rx = /\.(jpe?g|png|webp|gif)(\?|$)/i;
+            const href = ($img.closest('a').attr('href') || '').replace(/\s+/g, '');
+            let url = rx.test(href) ? href : ($img.attr('src') || '');
+            if (!url) return;
+            try { url = new URL(url, document.baseURI).href; } catch (e) { /* relativ belassen */ }
+
+            $host.css('position', 'relative');
+            const $sc = $('<button type="button" class="epa-split-btn" title="Bild manuell in zwei Hälften zerlegen">\u2702</button>');
+            $sc.on('click', function (e) {
+                e.preventDefault(); e.stopPropagation();
+                NewLayout.openSplitTool(url);
+            });
+            $host.append($sc);
+        }
+
         static addReportUnderImage(block, name) {
             if (block.find('.epa-report').length) return;
             let $img = block.find('.photo_cell.new_photo .userimage').first();
@@ -508,6 +533,11 @@ const chrome = {
                 .epa-macro { display:inline; margin:0 1px; font-size:12px; cursor:pointer;
                     text-decoration:underline; white-space:nowrap; font-weight:bold !important; }
                 .epa-macro:hover { opacity:.8; }
+                /* Schere-Button (klassisches Layout) */
+                .epa-split-btn { position:absolute; top:6px; left:6px; z-index:1001; width:26px; height:26px;
+                    border:none; border-radius:6px; background:rgba(15,23,42,.72); color:#fff;
+                    font-size:14px; line-height:26px; text-align:center; padding:0; cursor:pointer; }
+                .epa-split-btn:hover { background:#e11d48; }
                 /* Kopfzeile einzeilig halten (Yandex|Google|Bot|Scam|Admin) */
                 body:not(.epa-nl) .photo_cell_header { white-space:nowrap; }
                 /* Albenkontrolle: zentrierte Aktionszeile über allen Bildern */
@@ -2443,6 +2473,13 @@ const chrome = {
                 #epa-split-actions button { font:600 13px system-ui,sans-serif; padding:7px 12px; border-radius:6px;
                     border:1px solid #cbd5e1; background:#f8fafc; color:#0f172a; cursor:pointer; }
                 #epa-split-actions .epa-split-primary { background:#2563eb; border-color:#2563eb; color:#fff; }
+                #epa-split-res { display:flex; flex-wrap:wrap; gap:6px; }
+                #epa-split-res:empty { display:none; }
+                .epa-res-tag { font:600 12px system-ui,sans-serif; padding:4px 9px; border-radius:5px; border:1px solid; }
+                .epa-res-low { background:#d4edda; color:#155724; border-color:#c3e6cb; }
+                .epa-res-med { background:#fff3cd; color:#856404; border-color:#ffeaa7; }
+                .epa-res-high { background:#f8d7da; color:#721c24; border-color:#f5c6cb; }
+                .epa-res-err { background:#e2e8f0; color:#334155; border-color:#cbd5e1; }
             `;
             $('<style id="epa-split-styles">').text(css).appendTo('head');
         }
@@ -2457,21 +2494,26 @@ const chrome = {
                 const $ov = $('<div id="epa-split-ov"></div>');
                 const $box = $('<div id="epa-split-box"></div>');
                 $box.append('<h4>Bild zerlegen</h4>');
-                $box.append('<p id="epa-split-hint">Trennlinie an die Bildkante ziehen, dann jede Hälfte <b>speichern</b> und die Datei per Drag &amp; Drop in Hive prüfen. („Öffnen" dient nur zum Ansehen – ein geöffneter Browser-Tab lässt sich nicht direkt durch Hive prüfen.)</p>');
+                $box.append('<p id="epa-split-hint">Trennlinie an die Bildkante ziehen, dann <b>Links/Rechts prüfen</b> – die Hälfte wird direkt durch Hive geprüft. „Speichern"/„Öffnen" nur bei Bedarf.</p>');
                 const $stage = $('<div id="epa-split-stage"></div>');
                 const $im = $('<img alt="">').attr('src', url);
                 const $line = $('<div id="epa-split-line"></div>');
                 $stage.append($im).append($line);
                 const $actions = $('<div id="epa-split-actions"></div>');
                 const $pct = $('<span id="epa-split-pct"></span>');
-                const $saveL = $('<button type="button" class="epa-split-primary">Links speichern</button>');
-                const $saveR = $('<button type="button" class="epa-split-primary">Rechts speichern</button>');
+                const $checkL = $('<button type="button" class="epa-split-primary">Links prüfen</button>');
+                const $checkR = $('<button type="button" class="epa-split-primary">Rechts prüfen</button>');
+                const $saveL = $('<button type="button">Links speichern</button>');
+                const $saveR = $('<button type="button">Rechts speichern</button>');
                 const $left = $('<button type="button">Links öffnen</button>');
                 const $right = $('<button type="button">Rechts öffnen</button>');
                 const $close = $('<button type="button">Schließen</button>');
-                $actions.append($pct, $saveL, $saveR, $left, $right, $close);
-                $box.append($stage, $actions);
+                $actions.append($pct, $checkL, $checkR, $saveL, $saveR, $left, $right, $close);
+                const $res = $('<div id="epa-split-res"></div>');
+                $box.append($stage, $actions, $res);
                 $ov.append($box).appendTo('body');
+
+                const aiSvc = new AIDetectionService();
 
                 function setFrac(f) {
                     frac = Math.min(0.95, Math.max(0.05, f));
@@ -2491,8 +2533,8 @@ const chrome = {
                 $(document).on('mousemove.epasplit touchmove.epasplit', function (e) { if (dragging) posFromEvent(e); });
                 $(document).on('mouseup.epasplit touchend.epasplit', function () { dragging = false; });
 
-                // Erzeugt die gewählte Hälfte als Blob und übergibt eine Objekt-URL
-                function halfUrl(side, cb) {
+                // Erzeugt die gewählte Hälfte als Blob
+                function halfBlob(side, cb) {
                     const splitX = Math.round(frac * W);
                     const sx = side === 'L' ? 0 : splitX;
                     const sw = side === 'L' ? splitX : (W - splitX);
@@ -2500,21 +2542,51 @@ const chrome = {
                     const c = document.createElement('canvas');
                     c.width = sw; c.height = H;
                     c.getContext('2d').drawImage(img, sx, 0, sw, H, 0, 0, sw, H);
-                    if (c.toBlob) c.toBlob(function (b) { cb(URL.createObjectURL(b)); }, 'image/jpeg', 0.95);
-                    else cb(c.toDataURL('image/jpeg', 0.95));
+                    if (c.toBlob) { c.toBlob(function (b) { cb(b); }, 'image/jpeg', 0.95); return; }
+                    const d = c.toDataURL('image/jpeg', 0.95);
+                    const bin = atob(d.split(',')[1]);
+                    const arr = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+                    cb(new Blob([arr], { type: 'image/jpeg' }));
                 }
-                function openSide(side) { halfUrl(side, function (u) { window.open(u, '_blank'); }); }
-                // Als echte Datei speichern -> per Drag&Drop in Hive prüfbar
+                function openSide(side) { halfBlob(side, function (b) { window.open(URL.createObjectURL(b), '_blank'); }); }
+                // Als echte Datei speichern -> per Drag&Drop in Hive prüfbar (Fallback)
                 function saveSide(side) {
-                    halfUrl(side, function (u) {
+                    halfBlob(side, function (b) {
                         const a = document.createElement('a');
-                        a.href = u;
+                        a.href = URL.createObjectURL(b);
                         a.download = 'haelfte-' + (side === 'L' ? 'links' : 'rechts') + '.jpg';
                         document.body.appendChild(a);
                         a.click();
                         setTimeout(function () { a.remove(); }, 100);
                     });
                 }
+                // Hälfte direkt über den Hive-Proxy prüfen (wie die Automatik)
+                function showRes(label, pct) {
+                    let cls = 'epa-res-low', txt;
+                    if (pct === null) { cls = 'epa-res-err'; txt = label + ': Prüfung fehlgeschlagen'; }
+                    else {
+                        if (pct >= 70) cls = 'epa-res-high'; else if (pct >= 30) cls = 'epa-res-med';
+                        txt = label + ': ' + pct + '% KI-generiert';
+                    }
+                    $res.append($('<span class="epa-res-tag"></span>').addClass(cls).text(txt));
+                }
+                function checkSide(side, $btn) {
+                    const label = side === 'L' ? 'Links' : 'Rechts';
+                    const orig = $btn.text();
+                    $btn.prop('disabled', true).text(label + ' \u2026');
+                    halfBlob(side, function (b) {
+                        aiSvc.scoreBlob(b).then(function (score) {
+                            showRes(label, Math.round(score * 100));
+                            $btn.prop('disabled', false).text(orig);
+                        }).catch(function () {
+                            showRes(label, null);
+                            $btn.prop('disabled', false).text(orig);
+                        });
+                    });
+                }
+                $checkL.on('click', function () { checkSide('L', $checkL); });
+                $checkR.on('click', function () { checkSide('R', $checkR); });
                 $saveL.on('click', function () { saveSide('L'); });
                 $saveR.on('click', function () { saveSide('R'); });
                 $left.on('click', function () { openSide('L'); });
