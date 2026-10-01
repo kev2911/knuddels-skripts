@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.15
+// @version      1.16
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,11 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.16:
+// 1) Spoiler-Schaltflächen ("Anschauen") in Beiträgen passen sich dem
+//    Design an. Sie stammen vom Forum (Klasse form-button), nicht vom
+//    Verfasser - anders als die übrigen Bedienelemente in Beiträgen.
 
 // Neu in 1.15:
 // 1) Ungelesene Beiträge in der Themenansicht werden zuverlässig erkannt -
@@ -494,6 +499,29 @@
     color: var(--k-text) !important;
 }
 
+/* Spoiler-Schaltflächen des UBB-Markups ("Anschauen"/"Verbergen").
+   Die stammen vom Forum, nicht vom Verfasser - deshalb hier doch gestaltet,
+   obwohl Bedienelemente in Beiträgen sonst unangetastet bleiben. */
+.${ROOT_CLASS} .post_inner .form-button,
+.${ROOT_CLASS} .post_inner input[value="Anschauen"],
+.${ROOT_CLASS} .post_inner input[value="Verbergen"],
+.${ROOT_CLASS} .post_inner input[value="Zeigen"] {
+    background: var(--k-accent) !important;
+    color: #ffffff !important;
+    border: 1px solid transparent !important;
+    border-radius: 3px;
+    padding: 1px 10px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.${ROOT_CLASS} .post_inner .form-button:hover,
+.${ROOT_CLASS} .post_inner input[value="Anschauen"]:hover,
+.${ROOT_CLASS} .post_inner input[value="Verbergen"]:hover,
+.${ROOT_CLASS} .post_inner input[value="Zeigen"]:hover {
+    background: rgba(175, 142, 232, 0.75) !important;
+}
+
 /* Zitate und Codeblöcke des UBB-Markups */
 .${ROOT_CLASS} .ubbcode-block,
 .${ROOT_CLASS} .ubbcode-header,
@@ -798,8 +826,16 @@
             || el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'TEMPLATE';
     }
 
+    // Elemente, die das Skript selbst einfärbt - die Messung würde sonst
+    // die weiße Schrift auf der Akzentfarbe wieder abdunkeln
+    var SKIP_CONTRAST = '.form-button, input[value="Anschauen"], '
+                      + 'input[value="Verbergen"], input[value="Zeigen"]';
+
     function ensureReadable(el) {
         if (skipTag(el) || el.getAttribute('data-kforum-fixed'))
+            return;
+
+        if (el.matches && el.matches(SKIP_CONTRAST))
             return;
 
         var style = getComputedStyle(el);
