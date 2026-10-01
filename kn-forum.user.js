@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      1.16
+// @version      1.17
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,12 @@
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+// Neu in 1.17:
+// 1) Dunklere Violetttöne: gefüllte Flächen (Schaltflächen, Tabellenköpfe,
+//    Umschalter) nutzen jetzt einen eigenen, dunklen Ton. Der helle Ton
+//    bleibt für Links, Balken und Rahmen - dort muss er auf dunklem Grund
+//    lesbar sein.
 
 // Neu in 1.16:
 // 1) Spoiler-Schaltflächen ("Anschauen") in Beiträgen passen sich dem
@@ -99,10 +105,14 @@
      *  Farbpalette - hier anpassen
      * ----------------------------------------------------------------*/
     var COLORS = {
+        // heller Ton: Links, Markierungsbalken, Rahmen - muss auf dunklem Grund lesbar sein
         accent:     'rgb(175, 142, 232)',
-        accentSoft: 'rgba(175, 142, 232, 0.30)',
-        accentHead: 'rgba(175, 142, 232, 0.50)',
-        accentDark: 'rgb(82, 65, 110)',
+        accentSoft: 'rgba(175, 142, 232, 0.22)',
+        // dunkler Ton: gefüllte Flächen mit weißer Schrift (Schaltflächen, Tabellenköpfe)
+        accentFill: 'rgb(106, 74, 173)',
+        accentFillHover: 'rgb(126, 92, 197)',
+        accentHead: 'rgb(84, 58, 139)',
+        accentDark: 'rgb(62, 44, 100)',
         bg:         '#1c1c1c',
         panel:      '#242424',
         row1:       '#1f1f1f',
@@ -147,7 +157,7 @@
     font-weight: bold;
     line-height: 1.4;
     color: #fff;
-    background: ${COLORS.accent};
+    background: ${COLORS.accentFill};
     border: 1px solid rgba(0, 0, 0, 0.35);
     border-radius: 14px;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
@@ -158,9 +168,9 @@
 #kforumSettingsBtn { padding: 4px 9px; font-size: 14px; }
 
 #kforumToggle:hover,
-#kforumSettingsBtn:hover { background: rgba(175, 142, 232, 0.75); }
+#kforumSettingsBtn:hover { background: ${COLORS.accentFillHover}; }
 #kforumToggle:active,
-#kforumSettingsBtn:active { background: rgba(175, 142, 232, 0.45); }
+#kforumSettingsBtn:active { background: ${COLORS.accentDark}; }
 #kforumToggle:focus-visible,
 #kforumSettingsBtn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 #kforumToggle .kforumIcon { font-size: 14px; line-height: 1; }
@@ -218,7 +228,7 @@
     cursor: pointer;
 }
 
-#kforumPanel input[type="checkbox"] { margin: 2px 0 0; accent-color: ${COLORS.accent}; }
+#kforumPanel input[type="checkbox"] { margin: 2px 0 0; accent-color: ${COLORS.accentFill}; }
 #kforumPanel .kforumDepth2 { padding-left: 14px; opacity: 0.9; }
 #kforumPanel .kforumDepth3 { padding-left: 28px; opacity: 0.85; }
 
@@ -240,6 +250,8 @@
 .${ROOT_CLASS} {
     --k-accent:      ${COLORS.accent};
     --k-accent-soft: ${COLORS.accentSoft};
+    --k-accent-fill: ${COLORS.accentFill};
+    --k-accent-fill-hover: ${COLORS.accentFillHover};
     --k-accent-head: ${COLORS.accentHead};
     --k-accent-dark: ${COLORS.accentDark};
     --k-bg:          ${COLORS.bg};
@@ -506,7 +518,7 @@
 .${ROOT_CLASS} .post_inner input[value="Anschauen"],
 .${ROOT_CLASS} .post_inner input[value="Verbergen"],
 .${ROOT_CLASS} .post_inner input[value="Zeigen"] {
-    background: var(--k-accent) !important;
+    background: var(--k-accent-fill) !important;
     color: #ffffff !important;
     border: 1px solid transparent !important;
     border-radius: 3px;
@@ -519,7 +531,7 @@
 .${ROOT_CLASS} .post_inner input[value="Anschauen"]:hover,
 .${ROOT_CLASS} .post_inner input[value="Verbergen"]:hover,
 .${ROOT_CLASS} .post_inner input[value="Zeigen"]:hover {
-    background: rgba(175, 142, 232, 0.75) !important;
+    background: var(--k-accent-fill-hover) !important;
 }
 
 /* Zitate und Codeblöcke des UBB-Markups */
@@ -624,7 +636,7 @@
 .${ROOT_CLASS} input[type="button"]:not(.post_inner *),
 .${ROOT_CLASS} button:not(.post_inner *),
 .${ROOT_CLASS} .form-button:not(.post_inner *) {
-    background: var(--k-accent) !important;
+    background: var(--k-accent-fill) !important;
     color: #fff !important;
     border: 1px solid transparent !important;
     border-radius: 3px;
@@ -636,7 +648,7 @@
 .${ROOT_CLASS} input[type="submit"]:hover:not(.post_inner *),
 .${ROOT_CLASS} input[type="button"]:hover:not(.post_inner *),
 .${ROOT_CLASS} button:hover:not(.post_inner *),
-.${ROOT_CLASS} .form-button:hover:not(.post_inner *) { background: rgba(175, 142, 232, 0.7) !important; }
+.${ROOT_CLASS} .form-button:hover:not(.post_inner *) { background: var(--k-accent-fill-hover) !important; }
 
 /* --- Sonstiges ---------------------------------------------------- */
 .${ROOT_CLASS} hr { border-color: #333 !important; }
