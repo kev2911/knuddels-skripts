@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      2.02
+// @version      2.03
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,12 @@
 // @run-at       document-start
 // @grant        GM_openInTab
 // ==/UserScript==
+
+// Neu in 2.03:
+// 1) Ein über den Button geöffnetes Thema springt zum ersten ungelesenen
+//    Beitrag statt an den Seitenanfang: Die Adresse bekommt die Sprung-
+//    marke #UNREAD, und zusätzlich scrollt das Skript selbst dorthin,
+//    falls die Marke beim Weiterleiten verlorengeht.
 
 // Neu in 2.02:
 // 1) Die Ungelesen-Markierung greift wieder nur auf die Themen- und
@@ -1144,6 +1150,37 @@ a.kforumBusy { opacity: 0.6; }
     }
 
     /* ------------------------------------------------------------------
+     *  Zum ersten ungelesenen Beitrag springen
+     *  Wird ein Thema mit gonew=1 geöffnet, liefert das Forum zwar die
+     *  richtige Seite, aber nicht immer eine Sprungmarke. Dann bleibt die
+     *  Ansicht oben stehen - hier wird nachgeholfen.
+     * ----------------------------------------------------------------*/
+    function scrollToFirstNew() {
+        if (!/[?&]gonew=1/.test(location.search) && location.hash !== '#UNREAD')
+            return;
+
+        var target = document.querySelector('.kforumNewDivider')
+                  || document.getElementById('UNREAD')
+                  || document.querySelector('.' + FIRSTNEW_CLASS)
+                  || document.querySelector('.' + NEWPOST_CLASS);
+
+        if (!target)
+            return;
+
+        function jump() {
+            var top = target.getBoundingClientRect().top + window.pageYOffset - 70;
+
+            window.scrollTo(0, Math.max(0, top));
+        }
+
+        jump();
+
+        // Bilder und Schriften verschieben den Inhalt oft noch nach dem
+        // Seitenaufbau - deshalb ein zweiter Anlauf
+        window.addEventListener('load', function () { setTimeout(jump, 60); }, { once: true });
+    }
+
+    /* ------------------------------------------------------------------
      *  Rollen als Chips
      *  Das Forums-Update zeigt Forenadmin, Knuddels-Team und Moderator als
      *  kleine Grafiken. Die werden hier durch beschriftete Chips ersetzt.
@@ -1272,8 +1309,10 @@ a.kforumBusy { opacity: 0.6; }
         try {
             var url = new URL(href, location.href);
 
-            url.hash = '';
             url.searchParams.set('gonew', '1');
+
+            // Sprungmarke des Forums vor dem ersten ungelesenen Beitrag
+            url.hash = 'UNREAD';
 
             return url.href;
         }
@@ -2633,7 +2672,7 @@ a.kforumBusy { opacity: 0.6; }
 
         markUnreadRows();
         markNewPosts();
-        each([addOpenAllButton]);
+        each([addOpenAllButton, scrollToFirstNew]);
         fixLightSpots();
         fixPostContrast();
     }
