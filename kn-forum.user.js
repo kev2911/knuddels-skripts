@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      2.01
+// @version      2.02
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,12 @@
 // @run-at       document-start
 // @grant        GM_openInTab
 // ==/UserScript==
+
+// Neu in 2.02:
+// 1) Die Ungelesen-Markierung greift wieder nur auf die Themen- und
+//    Forenzeile selbst. Die Tabellen des Forums sind ineinander
+//    verschachtelt; dadurch galt auch die äußere Hüllzeile als ungelesen
+//    und hat den ganzen Block eingefärbt.
 
 // Neu in 2.01:
 // 1) Mehr Luft zwischen Nick und Rollen-Chip.
@@ -1234,6 +1240,13 @@ a.kforumBusy { opacity: 0.6; }
     // Erkennt an Klassen und Icons, ob eine Zeile Ungelesenes enthält.
     // Arbeitet auch auf einem im Hintergrund geladenen Dokument.
     function rowIsUnread(row) {
+        // Die Tabellen des Forums stecken ineinander. Eine Zeile, die
+        // selbst wieder Zeilen enthält, ist nur die Hülle um eine Tabelle
+        // und darf nicht als ungelesen gelten - sonst färbt sich der
+        // ganze Block statt der einzelnen Zeile.
+        if (row.querySelector('tr'))
+            return false;
+
         if (row.querySelector('td[class^="new-"], td[class*=" new-"]'))
             return true;
 
