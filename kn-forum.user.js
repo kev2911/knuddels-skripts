@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      2.04
+// @version      2.05
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,16 @@
 // @run-at       document-start
 // @grant        GM_openInTab
 // ==/UserScript==
+
+// Neu in 2.05:
+// 1) Die Werkzeugleiste des Editors ist im Darkmode wieder lesbar. Sie
+//    nutzt seit dem Update Font-Awesome-Zeichen statt der alten Grafiken;
+//    das Aufhellen der Grafiken (invert) hat die hellen Zeichen dadurch
+//    ins Dunkle gedreht. Jetzt helle Symbole, beim Überfahren hervor-
+//    gehoben, mit sichtbaren Trennstrichen.
+// 2) Die Auswahl "Beitragsicon" ist eingeklappt. Die Beschriftung zeigt
+//    das gewählte Icon und klappt die Auswahl auf; nach der Wahl
+//    schließt sie sich wieder.
 
 // Neu in 2.04:
 // 1) Spoiler stehen wieder in einem Kasten wie das Zitat, mit Kopfzeile
@@ -497,6 +507,41 @@ td.newsubjecttable > .kforumActionsTop {
     background: rgba(254, 154, 46, 0.16);
     border-color: rgba(254, 154, 46, 0.40);
 }
+
+/* --- Beitragsicon: eingeklappt ------------------------------------ */
+.kforumIconSet .kforumIconBody { display: none; }
+.kforumIconSet.kforumIconOpen .kforumIconBody { display: block; }
+
+.kforumIconLegend {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.kforumIconLegend::before {
+    content: "\\203A";
+    display: inline-block;
+    font-size: 15px;
+    line-height: 1;
+    opacity: 0.7;
+    transition: transform 0.15s ease;
+}
+
+.kforumIconSet.kforumIconOpen .kforumIconLegend::before { transform: rotate(90deg); }
+.kforumIconLegend:focus-visible { outline: 2px solid ${COLORS.accent}; outline-offset: 2px; }
+
+.kforumIconPreview {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: normal;
+    opacity: 0.85;
+}
+
+.kforumIconPreview img { vertical-align: middle; }
 
 /* --- Button: alle ungelesenen Themen öffnen ----------------------- */
 #kforumOpenAll {
@@ -1031,7 +1076,35 @@ a.kforumBusy { opacity: 0.6; }
 }
 
 .${ROOT_CLASS} .markup_panel_unselect_text:hover { background: var(--k-accent-soft) !important; }
-.${ROOT_CLASS} .markup_panel_normal_button { filter: invert(88%); }
+
+/* Die Leiste besteht jetzt aus Schriftzeichen, nicht mehr aus Grafiken.
+   Aufgehellt wird deshalb nur noch, was wirklich ein Bild ist. */
+.${ROOT_CLASS} .markup_panel_normal_button > img,
+.${ROOT_CLASS} .markup_panel_hover_button > img,
+.${ROOT_CLASS} .markup_panel_down_button > img { filter: invert(88%); }
+
+.${ROOT_CLASS} .markup_panel_normal_button,
+.${ROOT_CLASS} .markup_panel_hover_button,
+.${ROOT_CLASS} .markup_panel_down_button {
+    filter: none;
+    color: var(--k-text) !important;
+    background: transparent;
+}
+
+.${ROOT_CLASS} .markup_panel_hover_button {
+    color: #ffffff !important;
+    background: var(--k-accent-fill-hover) !important;
+}
+
+.${ROOT_CLASS} .markup_panel_down_button {
+    color: #ffffff !important;
+    background: var(--k-accent-fill) !important;
+}
+
+/* Trennstriche der Leiste sind im Original schwarz auf hell */
+.${ROOT_CLASS} table.markup_panel .divider {
+    border-right-color: rgba(255, 255, 255, 0.22) !important;
+}
 
 /* Farbwähler behält seine Originalfarben */
 .${ROOT_CLASS} #colors-table td { background-image: none; }
@@ -1667,6 +1740,98 @@ a.kforumBusy { opacity: 0.6; }
                 tag.textContent = 'Spoiler';
                 header.insertBefore(tag, header.firstChild);
             }
+        });
+    }
+
+    /* ------------------------------------------------------------------
+     *  Beitragsicon
+     *  Die Auswahl steht beim Antworten immer offen und nimmt viel Platz.
+     *  Hier wird sie eingeklappt; die Beschriftung zeigt das gewählte
+     *  Icon und öffnet die Auswahl bei Bedarf.
+     * ----------------------------------------------------------------*/
+    function collapsePostIcons() {
+        document.querySelectorAll('fieldset').forEach(function (group) {
+            if (group.getAttribute('data-kforum-icons'))
+                return;
+
+            var legend = group.querySelector('legend');
+
+            if (!legend || !/beitragsicon/i.test(legend.textContent || ''))
+                return;
+
+            if (!group.querySelector('input[name="Icon"]'))
+                return;
+
+            group.setAttribute('data-kforum-icons', '1');
+            group.classList.add('kforumIconSet');
+
+            // alles hinter der Beschriftung in einen eigenen Bereich
+            var body = document.createElement('div');
+            var node = legend.nextSibling;
+
+            body.className = 'kforumIconBody';
+
+            while (node) {
+                var next = node.nextSibling;
+
+                body.appendChild(node);
+                node = next;
+            }
+
+            group.appendChild(body);
+
+            legend.classList.add('kforumIconLegend');
+            legend.setAttribute('role', 'button');
+            legend.setAttribute('tabindex', '0');
+            legend.setAttribute('aria-expanded', 'false');
+            legend.title = 'Auswahl der Beitragsicons ein- und ausklappen';
+
+            var preview = document.createElement('span');
+
+            preview.className = 'kforumIconPreview';
+            legend.appendChild(preview);
+
+            function showChoice() {
+                preview.textContent = '';
+
+                var chosen = group.querySelector('input[name="Icon"]:checked');
+
+                if (!chosen)
+                    return;
+
+                var label = group.querySelector('label[for="' + chosen.id + '"]');
+                var image = label ? label.querySelector('img') : null;
+
+                if (image)
+                    preview.appendChild(image.cloneNode(true));
+                else
+                    preview.textContent = 'kein Icon';
+            }
+
+            function toggle() {
+                var open = group.classList.toggle('kforumIconOpen');
+
+                legend.setAttribute('aria-expanded', open ? 'true' : 'false');
+            }
+
+            legend.addEventListener('click', toggle);
+
+            legend.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    toggle();
+                }
+            });
+
+            // Nach der Wahl schließt sich die Auswahl wieder
+            body.addEventListener('change', function () {
+                showChoice();
+
+                group.classList.remove('kforumIconOpen');
+                legend.setAttribute('aria-expanded', 'false');
+            });
+
+            showChoice();
         });
     }
 
@@ -2782,7 +2947,7 @@ a.kforumBusy { opacity: 0.6; }
         // Anpassungen an das Forums-Update - jede für sich abgesichert,
         // damit ein geänderter Seitenaufbau nicht alles Weitere stoppt
         each([styleGroupTags, tweakNavigation, enhanceLikes, enhanceReplyButtons,
-              enhanceSpoilers]);
+              enhanceSpoilers, collapsePostIcons]);
 
         markUnreadRows();
         markNewPosts();
