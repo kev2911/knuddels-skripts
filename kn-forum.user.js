@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      2.03
+// @version      2.04
 // @description  Schaltet das Knuddels-Forum zwischen Originaldarstellung (Light) und einem dunklen Design im Stil des Extended Admincall um. Umschalter oben rechts, Auswahl wird gespeichert.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -11,6 +11,13 @@
 // @run-at       document-start
 // @grant        GM_openInTab
 // ==/UserScript==
+
+// Neu in 2.04:
+// 1) Spoiler stehen wieder in einem Kasten wie das Zitat, mit Kopfzeile
+//    und dem Knopf direkt neben der Kennzeichnung. Das Forum vergibt dem
+//    Spoilerkopf die Klasse "ubbcode-headerZZ", die in keinem Stylesheet
+//    vorkommt - deshalb fehlte der Kasten. Der Knopf trug "post-buttons"
+//    und wurde dadurch an den rechten Rand gefloatet.
 
 // Neu in 2.03:
 // 1) Ein über den Button geöffnetes Thema springt zum ersten ungelesenen
@@ -431,6 +438,64 @@ td.newsubjecttable > .kforumActionsTop {
     margin-top: 6px;
     padding-top: 5px;
     border-top: 1px solid rgba(128, 128, 128, 0.28);
+}
+
+/* --- Spoiler wieder als Kasten, wie das Zitat ---------------------- */
+.kforumSpoiler {
+    margin: 10px 0;
+    padding-left: 0 !important;
+    border: 1px solid rgba(128, 128, 128, 0.45);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.kforumSpoilerHeader {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 9px;
+    padding: 5px 10px;
+    font-weight: bold;
+    background: rgba(128, 128, 128, 0.14);
+    border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+}
+
+/* Der Knopf wird vom Forum nach rechts gefloatet - hier bleibt er
+   direkt neben der Kennzeichnung stehen */
+.kforumSpoilerHeader input.post-buttons,
+.kforumSpoilerHeader .post-buttons {
+    float: none !important;
+    margin: 0 !important;
+}
+
+.kforumSpoilerTag {
+    padding: 0 7px;
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 1.7;
+    border-radius: 999px;
+    color: #7a4b00;
+    background: rgba(254, 154, 46, 0.18);
+    border: 1px solid rgba(254, 154, 46, 0.42);
+}
+
+.kforumSpoilerBody { padding: 0 10px; }
+.kforumSpoilerBody > div { padding: 9px 0; }
+
+.${ROOT_CLASS} .kforumSpoiler {
+    background: #111111;
+    border-color: #3a3a3a;
+}
+
+.${ROOT_CLASS} .kforumSpoilerHeader {
+    background: #1b1b1b;
+    border-bottom-color: #3a3a3a;
+}
+
+.${ROOT_CLASS} .kforumSpoilerTag {
+    color: #ffc078;
+    background: rgba(254, 154, 46, 0.16);
+    border-color: rgba(254, 154, 46, 0.40);
 }
 
 /* --- Button: alle ungelesenen Themen öffnen ----------------------- */
@@ -870,7 +935,8 @@ a.kforumBusy { opacity: 0.6; }
 .${ROOT_CLASS} .post_inner .form-button,
 .${ROOT_CLASS} .post_inner input[value="Anschauen"],
 .${ROOT_CLASS} .post_inner input[value="Verbergen"],
-.${ROOT_CLASS} .post_inner input[value="Zeigen"] {
+.${ROOT_CLASS} .post_inner input[value="Zeigen"],
+.${ROOT_CLASS} .kforumSpoilerHeader input[type="button"] {
     background: var(--k-accent-fill) !important;
     color: var(--k-text) !important;
     border: 1px solid var(--k-fill-border) !important;
@@ -883,7 +949,8 @@ a.kforumBusy { opacity: 0.6; }
 .${ROOT_CLASS} .post_inner .form-button:hover,
 .${ROOT_CLASS} .post_inner input[value="Anschauen"]:hover,
 .${ROOT_CLASS} .post_inner input[value="Verbergen"]:hover,
-.${ROOT_CLASS} .post_inner input[value="Zeigen"]:hover {
+.${ROOT_CLASS} .post_inner input[value="Zeigen"]:hover,
+.${ROOT_CLASS} .kforumSpoilerHeader input[type="button"]:hover {
     background: var(--k-accent-fill-hover) !important;
     border-color: var(--k-fill-border-hover) !important;
 }
@@ -1559,6 +1626,51 @@ a.kforumBusy { opacity: 0.6; }
     }
 
     /* ------------------------------------------------------------------
+     *  Spoiler
+     *  Das Forum liefert den Kopf mit der Klasse "ubbcode-headerZZ", zu
+     *  der es kein Stylesheet gibt - der Kasten fehlt also. Hier bekommt
+     *  der Spoiler denselben Aufbau wie ein Zitat: Kopfzeile mit
+     *  Kennzeichnung und Knopf, darunter der Text.
+     * ----------------------------------------------------------------*/
+    function enhanceSpoilers() {
+        document.querySelectorAll('.post_inner div.spoiler').forEach(function (body) {
+            if (body.classList.contains('kforumSpoilerBody'))
+                return;
+
+            body.classList.add('kforumSpoilerBody');
+
+            var box = body.parentElement;
+            var header = null;
+
+            if (box && !box.classList.contains('post_inner'))
+                header = box.querySelector('[class*="ubbcode-header"]');
+
+            // Ohne eigenen Rahmen um Kopf und Text bleibt nur die Kopfzeile
+            if (!header) {
+                header = body.previousElementSibling;
+                box = null;
+            }
+
+            if (box)
+                box.classList.add('kforumSpoiler');
+
+            if (!header)
+                return;
+
+            header.classList.add('kforumSpoilerHeader');
+
+            // Kennzeichnung ergänzen, wenn der Kopf sie nicht selbst nennt
+            if (!/spoiler/i.test(header.textContent || '')) {
+                var tag = document.createElement('span');
+
+                tag.className = 'kforumSpoilerTag';
+                tag.textContent = 'Spoiler';
+                header.insertBefore(tag, header.firstChild);
+            }
+        });
+    }
+
+    /* ------------------------------------------------------------------
      *  Navigation
      * ----------------------------------------------------------------*/
     function tweakNavigation() {
@@ -2004,7 +2116,8 @@ a.kforumBusy { opacity: 0.6; }
     // Elemente, die das Skript selbst einfärbt - die Messung würde sonst
     // die weiße Schrift auf der Akzentfarbe wieder abdunkeln
     var SKIP_CONTRAST = '.form-button, input[value="Anschauen"], '
-                      + 'input[value="Verbergen"], input[value="Zeigen"]';
+                      + 'input[value="Verbergen"], input[value="Zeigen"], '
+                      + '.kforumSpoilerHeader input, .kforumSpoilerTag';
 
     function ensureReadable(el) {
         if (skipTag(el) || el.getAttribute('data-kforum-fixed'))
@@ -2668,7 +2781,8 @@ a.kforumBusy { opacity: 0.6; }
 
         // Anpassungen an das Forums-Update - jede für sich abgesichert,
         // damit ein geänderter Seitenaufbau nicht alles Weitere stoppt
-        each([styleGroupTags, tweakNavigation, enhanceLikes, enhanceReplyButtons]);
+        each([styleGroupTags, tweakNavigation, enhanceLikes, enhanceReplyButtons,
+              enhanceSpoilers]);
 
         markUnreadRows();
         markNewPosts();
