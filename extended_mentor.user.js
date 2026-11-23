@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Extended Mentor
 // @namespace    http://ps.addins.net/
-// @version      1.36
+// @version      1.37
 // @author       Kev
 // @description  Mentor-/Meldekontroll-Addon fuer das Knuddels Meldesystem. Laeuft eigenstaendig und parallel zum Extended Admincall.
 // @include      /^https:\/\/[^\/]*?\.knuddels\.de[^\/]*?\/ac\/.*?$/
@@ -11,6 +11,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      raw.githubusercontent.com
+// @connect      code.jquery.com
+// @noframes
 // @downloadURL  https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/extended_mentor.user.js
 // @updateURL    https://raw.githubusercontent.com/kev2911/knuddels-skripts/refs/heads/main/extended_mentor.user.js
 // ==/UserScript==
@@ -546,6 +548,18 @@
     #mentorRoot .grow { flex:1 1 auto; }
 
     #mentorRoot .typebox { border:1px solid rgba(var(--acc),.4); border-radius:5px; padding:8px; margin:6px 0; }
+    #mentorRoot .previewLoading { padding:10px 4px; font-size:13px; opacity:.85; }
+    #mentorRoot .previewFallbackNote {
+      padding:6px 10px; margin:4px 0; font-size:12.5px; border-radius:6px;
+      background:rgba(220,160,60,.18); border:1px solid rgba(220,160,60,.55);
+    }
+    /* Original-Look-Vorschau: bleibt im Raster. Die 1000px-Zwangsbreite des
+       Meldesystem-Skripts wird IM Vorschau-Dokument per max-width gekappt
+       (siehe PREVIEW_FIT_CSS), das iframe selbst fuellt einfach die Box. */
+    #mentorRoot iframe.preview.previewFull,
+    #mentorRoot.mentorPageMode .mentor-body iframe.preview.previewFull {
+      width:100% !important; min-width:0 !important; max-width:100% !important;
+    }
     #mentorRoot .rcPreviewBox, #mentorRoot .icPreviewBox {
       display:block; width:100%; max-width:100%;
       overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch;
@@ -723,6 +737,367 @@
         onerror: () => reject(new Error('Netzwerkfehler')),
         ontimeout: () => reject(new Error('Timeout'))
       });
+    });
+  }
+
+  // Vorschau einer Meldung in eine Box rendern.
+  // WICHTIG: Die Meldung darf NICHT mehr direkt als iframe-src geladen werden.
+  // Das Meldesystem liefert fuer so eingebettete Seitenaufrufe inzwischen nur
+  // noch einen Schnappschuss der "aktuellen Ansicht" der Sitzung (Titel
+  // "... (Ansicht vom TT.MM.JJ, HH:MM)") statt der Meldung. Der Hintergrund-
+  // Abruf per gmGet (wie bei der Detailpruefung) liefert weiterhin die echte
+  // Meldung. Daher: HTML holen und lokal ins iframe schreiben; ein <base>-Tag
+  // sorgt dafuer, dass CSS, Fotos und Links der Meldung weiter funktionieren
+  // (Links oeffnen in neuem Tab).
+  //
+  // Design-Mitnahme: Da im lokal geschriebenen iframe keine Userscripts mehr
+  // laufen, wuerde die Vorschau sonst im Knuddels-Standardlayout erscheinen.
+  // Laeuft Extended Admincall auf der Hauptseite, wird deshalb dessen
+  // AKTUELLES Stylesheet (Dark oder Light, je nach Einstellung des Nutzers)
+  // von der Hauptseite uebernommen und zusammen mit den wichtigsten
+  // DOM-Handgriffen des Admincall-Skripts in die Vorschau eingebaut. So sieht
+  // die Vorschau wieder aus wie frueher, als das Skript im iframe mitlief.
+  // Ohne Admincall bleibt es beim Standardlayout.
+
+  // Liefert das Admincall-Stylesheet der Hauptseite ('' wenn nicht aktiv).
+  // Erkennung ueber '.modern-toast' - das steht immer in dessen Basis-CSS
+  // und nirgends sonst (insbesondere nicht im Mentoring-CSS).
+  function collectAdmincallCss() {
+    try {
+      const styles = document.querySelectorAll('style');
+      for (let i = 0; i < styles.length; i++) {
+        const t = styles[i].textContent || '';
+        if (t.indexOf('.modern-toast') !== -1) return t;
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  // Die DOM-Handgriffe, die Extended Admincall auf Meldungsseiten macht und
+  // auf die sein CSS angewiesen ist - hier als eigenstaendiges Vanilla-Script,
+  // das im Vorschau-Dokument laeuft: Abschnitte zwischen <hr> in
+  // .memberWrapper-Kaesten buendeln, <hr> entfernen/ersetzen, Nick-Farbklassen
+  // setzen, Kopfzeile vereinfachen, Fotos begrenzen und im Dark-Mode die
+  // Eingabefelder invertieren.
+  function previewFixupScript(dark) {
+    return "(function(){function go(){try{"
+      + "function qsa(s){return Array.prototype.slice.call(document.querySelectorAll(s));}"
+      + "qsa('span[style*=\"color: #900\"]').forEach(function(s){s.classList.add('userReported');});"
+      + "qsa('span[style*=\"color: #060\"]').forEach(function(s){s.classList.add('userReporting');});"
+      + "qsa('div[style*=\"background:#eee\"],p[style*=\"background:#ddd\"]').forEach(function(s){s.classList.add('reportHint');});"
+      + "qsa('img[alt=\"Foto\"]').forEach(function(i){i.style.width='300px';});"
+      + "qsa('#main > div').forEach(function(d){if(d.id)return;if((d.textContent||'').indexOf('Du bist eingeloggt')!==-1)d.classList.add('loginDetail');});"
+      + "var h=document.getElementById('header');"
+      + "if(h){var m=(h.textContent||'').match(/Meldung\\s+(\\*[\\d.]+.*)$/);"
+      + "h.innerHTML='<br>Knuddels - Meldesystem'+(m?'<div id=\"reportInfo\">Meldung: '+m[1]+'</div>':'');}"
+      + "var c=document.getElementById('content');"
+      + "if(c){var hrs=qsa('#content hr');"
+      + "hrs.forEach(function(hr){var moved=[],n=hr.nextSibling;"
+      + "while(n&&!(n.nodeType===1&&n.tagName==='HR')){moved.push(n);n=n.nextSibling;}"
+      + "if(moved.length){var w=document.createElement('div');w.className='memberWrapper';"
+      + "hr.parentNode.insertBefore(w,moved[0]);moved.forEach(function(x){w.appendChild(x);});}});"
+      + "hrs.forEach(function(hr,i){if(!hr.parentNode)return;"
+      + "if(i===0){hr.parentNode.removeChild(hr);}else{hr.parentNode.replaceChild(document.createElement('br'),hr);}});}"
+      + (dark
+        ? "qsa('input[type=\"text\"],input[type=\"password\"],input[type=\"number\"],input[type=\"checkbox\"],select').forEach(function(e){e.style.filter='invert(100%)';});"
+        : "")
+      + "}catch(e){}}"
+      + "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',go);}else{go();}"
+      + "})();";
+  }
+
+  // Baut aus dem geholten Meldungs-HTML das fertige Vorschau-Dokument.
+  function buildPreviewDoc(html, acCss) {
+    const base = '<base href="' + baseUri() + '/ac/" target="_blank">';
+    let doc = html;
+    let inject = '';
+    if (acCss) {
+      // Wie auf der echten Seite: Admincall ersetzt dort saemtliche
+      // <style>-Inhalte durch sein CSS - also Original-<style>-Bloecke raus.
+      doc = doc.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+      const dark = acCss.indexOf('#1c1c1c') !== -1;
+      inject = '<style>' + acCss + '</style>'
+        // Nachbesserungen fuer die Notdarstellung:
+        // - NUR max-width kappen (die 1000px-Zwangsbreite), KEIN width:auto -
+        //   das wuerde auch die Inline-Spalten (140px/460px) der Meldungsseite
+        //   zerstoeren und Label+Wert zusammenkleben lassen.
+        // - .caseinfo2 (Begruendung) explizit faerben: das Original-CSS trifft
+        //   die Klasse nur dank des Quirks-Modus der echten Seite; ein
+        //   srcdoc-Dokument laeuft immer im Standards-Modus.
+        + '<style>'
+        + '#main,#content,#navi,#footer{max-width:100% !important;}'
+        + '#main div:not(#header):not(#navi):not(.caseInfo2):not(.commentOutput):not(.log){max-width:100% !important;}'
+        + 'hr{max-width:100% !important;}'
+        + '#footer{margin-top:40px !important;}'
+        + '.caseinfo2{background:' + (dark ? '#242424' : '#f2f2f2') + ' !important;background-color:' + (dark ? '#242424' : '#f2f2f2') + ' !important;}'
+        + '</style>'
+        + '<scr' + 'ipt>' + previewFixupScript(dark) + '</scr' + 'ipt>';
+    }
+    if (/<head[^>]*>/i.test(doc)) doc = doc.replace(/<head[^>]*>/i, m => m + base);
+    else doc = base + doc;
+    if (inject) {
+      if (/<\/head>/i.test(doc)) doc = doc.replace(/<\/head>/i, inject + '</head>');
+      else doc = doc.replace(base, base + inject);
+    }
+    return doc;
+  }
+
+  /* ---- Vorschau im Original-Look des Meldesystem-Skripts ----
+     Anforderung: Laeuft bei der Person das Meldesystem-Skript (Extended
+     Admincall), soll die Vorschau EXAKT dessen Layout zeigen; laeuft es
+     nicht, das normale Meldesystem-Layout. Nachbauen ist dafuer zu grob -
+     stattdessen wird das ECHTE Skript in der Vorschau ausgefuehrt:
+       1. Das iframe navigiert auf die echte Meldungs-URL. Was der Server
+          dabei liefert (inzwischen oft nur ein Sitzungs-Schnappschuss), ist
+          egal - es wird sofort ueberschrieben. Entscheidend: Die URL im
+          iframe stimmt, denn das Admincall-Skript prueft an vielen Stellen
+          window.location (ac_viewcase.pl-Erkennung), und relative Pfade,
+          localStorage (Dark/Light-Einstellung!) usw. sind echt.
+       2. Das korrekte Meldungs-HTML (per Hintergrund-Abruf geholt, der
+          weiterhin die echte Meldung liefert) ersetzt per document.write
+          den Serverinhalt.
+       3. Danach werden GM-Shims, jQuery, jQuery-UI und das Admincall-Skript
+          selbst (von seiner offiziellen Update-URL, einmal pro Sitzung
+          geladen) ins iframe injiziert - es baut die Seite dann genauso um
+          wie ueberall sonst, inklusive der Einstellungen der Person.
+     Schlaegt irgendetwas davon fehl, greift als Notloesung die bisherige
+     CSS-Nachbildung (renderPreviewSrcdoc mit Admincall-CSS); ohne Admincall
+     bleibt es beim unveraenderten Standardlayout. */
+
+  const AC_SCRIPT_URL = 'https://raw.githubusercontent.com/inflames2k/Scripts/refs/heads/main/extended_admincall.js';
+  const AC_JQUERY_URL = 'https://code.jquery.com/jquery-3.7.1.min.js';
+  const AC_JQUERYUI_URL = 'https://code.jquery.com/ui/1.12.1/jquery-ui.js';
+
+  // Skript-Quelltexte einmal pro Sitzung laden (UTF-8, daher gmGetText) und
+  // ueber eine Kennung validieren. Fehlversuche werden nicht gecacht, der
+  // naechste Klick probiert es neu. jQuery/jQuery-UI werden bewusst HIER im
+  // Hintergrund geholt und spaeter eingebettet - ein <script src> im iframe
+  // waere von Netz-/Richtlinien-Eigenheiten der Zielseite abhaengig und war
+  // die Ursache dafuer, dass still die Notdarstellung erschien.
+  const _assetCache = {};
+  function getCachedScript(url, mustContain, label) {
+    if (!_assetCache[url]) {
+      _assetCache[url] = gmGetText(url).then(code => {
+        if (!code || code.indexOf(mustContain) === -1) throw new Error(label + ': unerwarteter Inhalt');
+        return code;
+      }, e => { throw new Error(label + ': ' + ((e && e.message) || 'Download fehlgeschlagen')); });
+      _assetCache[url].catch(() => { delete _assetCache[url]; });
+    }
+    return _assetCache[url];
+  }
+  function getAdmincallScript() { return getCachedScript(AC_SCRIPT_URL, 'bootStrap', 'Meldesystem-Skript'); }
+  function getJqueryScripts() {
+    return Promise.all([
+      getCachedScript(AC_JQUERY_URL, 'jQuery v3.7.1', 'jQuery'),
+      getCachedScript(AC_JQUERYUI_URL, 'jQuery UI - v1.12.1', 'jQuery-UI')
+    ]);
+  }
+
+  // Bisheriger Weg (lokales srcdoc): ohne acCss reines Standardlayout, mit
+  // acCss die CSS-Nachbildung - dient jetzt als Fallback.
+  function renderPreviewSrcdoc($box, html, acCss, reason) {
+    $box.empty();
+    if (acCss && reason) {
+      // Die Original-Darstellung ist fehlgeschlagen - das soll sichtbar sein
+      // statt still ein abweichendes Design zu zeigen.
+      console.warn('Mentoring-Vorschau: Original-Darstellung nicht moeglich -', reason);
+      $box.append($('<div class="previewFallbackNote"></div>')
+        .text('\u26A0\uFE0F Vorschau in vereinfachter Darstellung \u2013 das Meldesystem-Skript konnte nicht geladen werden (' + reason + ').'));
+    }
+    const iframe = document.createElement('iframe');
+    iframe.className = 'preview';
+    $box.append(iframe);
+    iframe.srcdoc = buildPreviewDoc(html, acCss);
+  }
+
+  // Shims + jQuery + jQuery-UI + Admincall-Skript ins fertige iframe-Dokument
+  // injizieren. onOk/onFail genau einmal.
+  function injectPreviewScripts(iframe, acCode, jqCode, jquiCode, onOk, onFail) {
+    let done = false;
+    const ok = () => { if (!done) { done = true; onOk(); } };
+    const fail = reason => { if (!done) { done = true; onFail(reason); } };
+    // Haelt die Original-Darstellung im Raster der Vorschau-Box:
+    // Das Meldesystem-Skript erzwingt 1000px-Spalten (#main div ... width:1000px).
+    // Hier wird AUSSCHLIESSLICH per max-width gekappt - width wird nie
+    // ueberschrieben, sonst kollabieren die Inline-Spalten (140px/460px) der
+    // Meldungsseite (Label und Wert kleben dann zusammen).
+    const PREVIEW_FIT_CSS = ''
+      + 'html,body{overflow-x:hidden;}'
+      + '#main,#content,#navi,#footer{width:auto !important;max-width:100% !important;}'
+      + '#main div:not(#header):not(#navi):not(.caseInfo2):not(.commentOutput):not(.log){max-width:100%;}'
+      + '.commentOutput{max-width:100% !important;}'
+      + 'hr{max-width:100% !important;}';
+
+    // Dieses CSS muss Theme-Wechsel des Skripts ueberleben; das Skript ersetzt
+    // bei setStyle() den Text ALLER <style>-Tags. Daher bevorzugt als
+    // unantastbares Konstruierte-Stylesheet, <style data-mentor-fit> nur als
+    // Notbehelf.
+    const PREVIEW_FIT_SCRIPT = "(function(){"
+      + "if(document.documentElement.hasAttribute('data-mentor-fit-done'))return;"
+      + "var css=" + JSON.stringify(PREVIEW_FIT_CSS) + ";"
+      + "try{var s=new CSSStyleSheet();s.replaceSync(css);"
+      + "document.adoptedStyleSheets=Array.prototype.slice.call(document.adoptedStyleSheets||[]).concat([s]);}"
+      + "catch(e){try{var el=document.createElement('style');el.setAttribute('data-mentor-fit','1');"
+      + "el.textContent=css;(document.head||document.documentElement).appendChild(el);}catch(e2){}}"
+      + "try{document.documentElement.setAttribute('data-mentor-fit-done','1');}catch(e3){}})();";
+    const fitApplied = () => {
+      try { return !!(iframe.contentDocument && iframe.contentDocument.documentElement
+                     && iframe.contentDocument.documentElement.hasAttribute('data-mentor-fit-done')); }
+      catch (e) { return false; }
+    };
+    try {
+      const d = iframe.contentDocument;
+      const w = iframe.contentWindow;
+      if (!d || !w) { fail('Vorschau-Dokument nicht zugreifbar'); return; }
+      const head = d.head || d.documentElement;
+      const addInline = code => {
+        const s = d.createElement('script');
+        s.textContent = code;
+        head.appendChild(s);
+      };
+      // Laeuft das Meldesystem-Skript hier bereits (Tampermonkey kann es je
+      // nach Browser auch selbst in das iframe injizieren)? Dann nichts
+      // doppelt ausfuehren - das Original ist ja schon am Werk.
+      const acAlready = () => {
+        try {
+          if (d.getElementById('changelog')) return true;
+          const st = d.querySelectorAll('style');
+          for (let i = 0; i < st.length; i++) {
+            if ((st[i].textContent || '').indexOf('.modern-toast') !== -1) return true;
+          }
+        } catch (e) {}
+        return false;
+      };
+      if (acAlready()) { if (!fitApplied()) addInline(PREVIEW_FIT_SCRIPT); ok(); return; }
+      const ver = (acCode.match(/@version\s+(\S+)/) || [])[1] || '';
+      // GM-Shims (das Skript nutzt genau diese drei) + Links in neuen Tab:
+      // Navigation IM iframe wuerde vom Server wieder nur den Sitzungs-
+      // Schnappschuss bekommen, also oeffnet alles im neuen Tab.
+      addInline(
+        "window.GM_info={script:{name:'Extended Admincall',version:" + JSON.stringify(ver) + "}};"
+        + "window.GM_getResourceText=function(){return '';};"
+        + "window.GM_xmlhttpRequest=function(o){try{if(o&&o.onerror)o.onerror(new Error('Mentoring-Vorschau'));}catch(e){}};"
+        + "try{var __b=document.createElement('base');__b.target='_blank';"
+        + "(document.head||document.documentElement).insertBefore(__b,(document.head||document.documentElement).firstChild);}catch(e){}"
+      );
+      addInline(jqCode);
+      if (!w.jQuery) { fail('jQuery wurde nicht ausgefuehrt'); return; }
+      addInline(jquiCode);
+      addInline('try{\n' + acCode + '\n}catch(e){console.warn("Mentoring-Vorschau/Admincall:",e);}');
+      if (!fitApplied()) addInline(PREVIEW_FIT_SCRIPT);
+      if (!acAlready()) { fail('Meldesystem-Skript wurde nicht ausgefuehrt'); return; }
+      ok();
+    } catch (e) { fail('Injektion fehlgeschlagen: ' + ((e && e.message) || e)); }
+  }
+
+  // Vorschau im Original-Look - OHNE jede echte iframe-Navigation.
+  //
+  // Lehre aus der Praxis: Sobald das iframe wirklich zum Server navigiert,
+  // greift dessen Sonderbehandlung fuer eingebettete Aufrufe (Sitzungs-
+  // Schnappschuss bzw. ein fuer uns unzugreifbares Dokument) - daran sind
+  // beide vorherigen Varianten gescheitert. Deshalb wird hier GAR NICHT
+  // navigiert: Das frisch eingehaengte iframe hat sofort ein leeres,
+  // gleichberechtigtes Dokument; das wird synchron per document.write mit dem
+  // (per Hintergrund-Abruf geholten) Meldungs-HTML gefuellt. Nach dem open()
+  // traegt das Dokument die URL der Mentoring-Seite (gleiche /ac/-Herkunft),
+  // daher darf history.replaceState sie auf die echte Meldungs-URL setzen -
+  // damit stimmen die ac_viewcase.pl-Erkennungen des Meldesystem-Skripts und
+  // alle relativen Pfade (Fotos, CSS, Seiten-Scripts). Sobald das Dokument
+  // fertig geladen ist, werden Shims, jQuery und das Skript injiziert.
+  function renderPreviewLikeAdmincall($box, reportId, html, acCode, jqCode, jquiCode, acCss) {
+    const url = viewcaseUrl(reportId);
+    const iframe = document.createElement('iframe');
+    iframe.className = 'preview previewFull';
+    iframe.style.visibility = 'hidden'; // erst zeigen, wenn fertig aufgebaut
+    let settled = false;
+    let started = false;
+    let poll = null;
+    const cancel = () => { settled = true; clearTimeout(watchdog); if (poll) clearInterval(poll); };
+    const fallback = reason => {
+      if (settled) return;
+      cancel();
+      if (!iframe.isConnected) return; // Box wurde geleert - nichts mehr zeichnen
+      try { iframe.remove(); } catch (e) {}
+      renderPreviewSrcdoc($box, html, acCss, reason);
+    };
+    const watchdog = setTimeout(() => fallback('Zeitueberschreitung beim Aufbau'), 15000);
+
+    // Das Lade-Zeichen stehen lassen, bis die Vorschau wirklich fertig ist.
+    $box.append(iframe); // KEINE src-Zuweisung: es gibt nie eine Navigation
+
+    let d = iframe.contentDocument;
+    if (!d) { fallback('Vorschau-Dokument nicht verfuegbar'); return; }
+    try {
+      d.open();
+      d.write(html);
+      d.close();
+    } catch (e) { fallback('Dokument konnte nicht erstellt werden'); return; }
+    d = iframe.contentDocument; // dasselbe Dokument-Objekt, der Klarheit halber
+    try { iframe.contentWindow.history.replaceState(null, '', url); }
+    catch (e) { /* dann bleibt die /ac/-URL der Mentoring-Seite - Skript laeuft trotzdem */ }
+
+    const go = () => {
+      if (settled || started) return;
+      if (!iframe.isConnected) { cancel(); return; } // zugeklappt -> still beenden
+      started = true;
+      injectPreviewScripts(iframe, acCode, jqCode, jquiCode, () => {
+        cancel();
+        $box.children('.previewLoading').remove();
+        iframe.style.visibility = '';
+      }, reason => fallback(reason));
+    };
+
+    // Warten, bis die Seiten-Scripts/Ressourcen des geschriebenen Dokuments
+    // fertig sind: load-Ereignis des iframe-Fensters, mit readyState-Polling
+    // als Sicherheitsnetz (das Dokument wechselt nie mehr, beides ist stabil).
+    const ready = () => {
+      try { return iframe.contentDocument && iframe.contentDocument.readyState === 'complete'; }
+      catch (e) { return false; }
+    };
+    if (ready()) { go(); return; }
+    try { iframe.contentWindow.addEventListener('load', go, { once: true }); } catch (e) {}
+    poll = setInterval(() => {
+      if (settled || started) { clearInterval(poll); return; }
+      if (!iframe.isConnected) { clearInterval(poll); cancel(); return; }
+      if (ready()) { clearInterval(poll); go(); }
+    }, 150);
+  }
+
+  function renderPreviewInto($box, reportId) {
+    const url = viewcaseUrl(reportId);
+    $box.html('<div class="previewLoading">\u23F3 Vorschau wird geladen \u2026</div>');
+    gmGet(url).then(html => {
+      if (!$box.children('.previewLoading').length) return; // inzwischen zugeklappt
+      // Schnappschuss-Erkennung: liefert der Server statt der Meldung die
+      // "aktuelle Ansicht" (Titel enthaelt "(Ansicht vom ...)"), ehrlich
+      // darauf hinweisen statt falschen Inhalt anzuzeigen.
+      const title = (html.match(/<title>([\s\S]*?)<\/title>/i) || [])[1] || '';
+      if (/\(Ansicht vom/i.test(title) || !/Meldung\s*\*/i.test(title)) {
+        $box.html('<div class="previewLoading">\u26A0\uFE0F Das Meldesystem hat statt der Meldung eine Sitzungs-Ansicht geliefert \u2013 '
+          + '<a href="' + url + '" target="_blank">Meldung im neuen Tab \u00F6ffnen</a></div>');
+        return;
+      }
+      const acCss = collectAdmincallCss();
+      if (acCss) {
+        // Meldesystem-Skript laeuft bei dieser Person: Vorschau im exakt
+        // gleichen Look, indem das echte Skript im iframe ausgefuehrt wird.
+        Promise.all([getAdmincallScript(), getJqueryScripts()])
+          .then(parts => {
+            if (!$box.children('.previewLoading').length) return;
+            renderPreviewLikeAdmincall($box, reportId, html, parts[0], parts[1][0], parts[1][1], acCss);
+          })
+          .catch(e => {
+            if (!$box.children('.previewLoading').length) return;
+            renderPreviewSrcdoc($box, html, acCss, (e && e.message) || 'Download fehlgeschlagen');
+          });
+      } else {
+        // Kein Meldesystem-Skript: normales Meldesystem-Layout.
+        renderPreviewSrcdoc($box, html, '');
+      }
+    }).catch(() => {
+      if (!$box.children('.previewLoading').length) return;
+      $box.html('<div class="previewLoading">\u26A0\uFE0F Vorschau konnte nicht geladen werden \u2013 '
+        + '<a href="' + url + '" target="_blank">Meldung im neuen Tab \u00F6ffnen</a></div>');
     });
   }
 
@@ -2296,7 +2671,7 @@
       const id = $(this).data('id');
       const $box = $('.icPreviewBox[data-id="' + id + '"]');
       if ($box.children().length) { $box.empty(); return; }
-      $box.html('<iframe class="preview" src="' + viewcaseUrl(id) + '"></iframe>');
+      renderPreviewInto($box, id);
     });
 
     // Texteingaben laufend in den State sichern
@@ -2483,7 +2858,7 @@
       const $box = $('.rcPreviewBox[data-idx="' + idx + '"]');
       if ($box.children().length) { $box.empty(); return; }
       const row = state.pending[idx];
-      $box.html('<iframe class="preview" src="' + viewcaseUrl(row.reportId) + '"></iframe>');
+      renderPreviewInto($box, row.reportId);
     });
 
     $('.rcRate').on('click', function () {
