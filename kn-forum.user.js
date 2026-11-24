@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      3.07
+// @version      3.08
 // @description  Nutzt die hellen und dunklen Stile des Knuddels-Forums und ergaenzt sie: Umschalter oben rechts, Markierung ungelesener Themen und Beitraege, Rollen-Chips, Like ohne Zwischenseite, die gewohnten Antwort-Knoepfe und ein Einstellungsmenue.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -172,6 +172,7 @@
     // Welcher Stil des Forums gerade läuft - gemessen, nicht geraten
     var ROOT_CLASS   = 'kforumDark';     // Klasse am <html>, wenn dunkel
     var LIGHT_CLASS  = 'kforumLight';    // Klasse am <html>, wenn hell
+    var SOFT_CLASS   = 'kforumSoftBox';  // abgedunkelte helle Fläche im Dark-Stil
     var SLIM_CLASS   = 'kforumSlim';     // Klasse am <html> für die schlanke Ansicht
     var SLIMA_CLASS  = 'kforumSlimAuthor'; // dto., zusätzlich ohne Nebensachen beim Autor
     var UNREAD_CLASS = 'kforumUnread';   // Marker für Zeilen mit ungelesenen Beiträgen
@@ -525,6 +526,15 @@ td.newsubjecttable > .kforumActionsTop {
     margin-top: 6px;
     padding-top: 5px;
     border-top: 1px solid rgba(128, 128, 128, 0.28);
+}
+
+/* --- Helle Kästen im dunklen Stil abfangen -------------------------- */
+/* Die Fläche wird nicht auf eine feste Farbe gesetzt, sondern nur leicht
+   aufgehellt gegenüber dem Seitengrund. So fügt sie sich in jeden Stil
+   ein, den das Forum künftig ausliefert. */
+.${ROOT_CLASS} .${SOFT_CLASS} {
+    background-color: rgba(255, 255, 255, 0.07) !important;
+    border-color: rgba(255, 255, 255, 0.22) !important;
 }
 
 /* --- Schlanke Ansicht ---------------------------------------------- */
@@ -2160,6 +2170,61 @@ a.kforumBusy { opacity: 0.6; }
     }
 
 
+    /* ------------------------------------------------------------------
+     *  Helle Kästen im dunklen Stil
+     *  Einzelne Hinweise des Forums - etwa der Vermerk bei vormoderierten
+     *  Themen - bringen einen fest verdrahteten hellen Hintergrund mit.
+     *  Im dunklen Stil leuchtet das als weiße Fläche heraus.
+     *
+     *  Bewusst gemessen statt über Klassennamen: Geprüft wird, ob die
+     *  Fläche tatsächlich hell ist. Stellt das Forum das später selbst
+     *  um, misst die Prüfung einen dunklen Hintergrund und rührt nichts
+     *  an. Der Inhalt von Beiträgen bleibt außen vor - dort bestimmt der
+     *  Verfasser die Gestaltung, und dafür gibt es fixPostContrast.
+     * ----------------------------------------------------------------*/
+    function softenBrightBoxes() {
+        if (theme !== 'dark')
+            return;
+
+        var area = document.getElementById('content') || document.body;
+
+        if (!area)
+            return;
+
+        area.querySelectorAll('*').forEach(function (node) {
+            if (skipTag(node) || node.classList.contains(SOFT_CLASS))
+                return;
+
+            // Beiträge, eigene Bedienelemente und Klappmenüs auslassen
+            if (node.closest('.post_inner, #kforumPanel, #kforumToggle, .popup_menu'))
+                return;
+
+            // Eingabefelder, Auswahllisten und Knöpfe auslassen: deren helle
+            // Darstellung ist der Normalfall des Browsers und gewollt, nicht
+            // ein vergessener Hintergrund im dunklen Stil
+            if (node.matches('input, textarea, select, option, button, .form-button'))
+                return;
+
+            // Flächen ohne Text auslassen. Damit bleiben die Farbfelder der
+            // Farbauswahl im Editor unangetastet - dort ist der helle
+            // Hintergrund genau die Information. Ein Hinweiskasten des
+            // Forums trägt dagegen immer Text.
+            if (!(node.textContent || '').trim())
+                return;
+
+            if (!isLight(getComputedStyle(node).backgroundColor))
+                return;
+
+            node.classList.add(SOFT_CLASS);
+
+            // Nach dem Abdunkeln steht die bisherige, meist dunkle Schrift
+            // auf dunklem Grund - deshalb die Lesbarkeit neu prüfen
+            ensureReadable(node);
+            node.querySelectorAll('*').forEach(ensureReadable);
+        });
+    }
+
+
 
     /* ------------------------------------------------------------------
      *  Pfad am Seitenende
@@ -2940,7 +3005,7 @@ a.kforumBusy { opacity: 0.6; }
 
         markUnreadRows();
         markNewPosts();
-        each([addOpenAllButton, scrollToFirstNew, fixPostContrast]);
+        each([addOpenAllButton, scrollToFirstNew, fixPostContrast, softenBrightBoxes]);
     }
 
     // führt eine Reihe von Schritten aus und protokolliert Fehler,
