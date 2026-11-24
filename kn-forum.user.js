@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      3.02
+// @version      3.03
 // @description  Nutzt die hellen und dunklen Stile des Knuddels-Forums und ergaenzt sie: Umschalter oben rechts, Markierung ungelesener Themen und Beitraege, Rollen-Chips, Like ohne Zwischenseite, die gewohnten Antwort-Knoepfe und ein Einstellungsmenue.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -532,32 +532,28 @@ td.newsubjecttable > .kforumActionsTop {
     border: 1px solid rgba(128, 128, 128, 0.45);
     border-radius: 4px;
     background: rgba(128, 128, 128, 0.05);
+    overflow: hidden;
 }
 
-/* Nichts am Spoiler darf den Text beschneiden. Das Forum deckelt den
-   Inhalt an mehreren Stellen (Höhe, Zeilenzahl, Umbruch); hier wird
-   jede dieser Bremsen für den Kasten und alles darin gelöst, damit
-   auch lange Gesprächsverläufe vollständig aufklappen. */
-.kforumSpoiler,
-.kforumSpoiler * {
+/* Nichts am Textbereich darf den Inhalt beschneiden. Das Forum deckelt
+   ihn an mehreren Stellen (Höhe, Zeilenzahl, Umbruch); hier wird jede
+   dieser Bremsen gelöst, damit auch lange Gesprächsverläufe vollständig
+   aufklappen. Die Kopfzeile bleibt bewusst außen vor - dort würde ein
+   freigestellter Überlauf den Knopf aus dem Kasten schieben. */
+.kforumSpoilerBody,
+.kforumSpoilerBody * {
     max-height: none !important;
-    min-height: 0 !important;
     overflow: visible !important;
     text-overflow: clip !important;
     -webkit-line-clamp: none !important;
+    white-space: normal !important;
 }
 
-.kforumSpoiler,
 .kforumSpoilerBody,
-.kforumSpoilerBody * {
-    white-space: normal !important;
-    word-break: break-word;
-}
+.kforumSpoilerBody * { word-break: break-word; }
 
 /* Die Höhe darf nur dort frei werden, wo kein Inhalt versteckt ist -
    sonst klappt der Spoiler von allein auf */
-.kforumSpoilerHeader,
-.kforumSpoiler > .ubbcode-body,
 .kforumSpoilerBody { height: auto !important; }
 
 .kforumSpoilerHeader {
@@ -565,11 +561,22 @@ td.newsubjecttable > .kforumActionsTop {
     align-items: center;
     flex-wrap: wrap;
     gap: 4px 9px;
-    padding: 5px 10px;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 6px 10px;
     font-weight: bold;
     background: rgba(128, 128, 128, 0.14);
     border-bottom: 1px solid rgba(128, 128, 128, 0.35);
     border-radius: 3px 3px 0 0;
+}
+
+/* Die Kopfzeile wächst um den Knopf herum, statt ihn überstehen zu
+   lassen - er bringt vom Forum mehr Höhe mit als die Zeile Text */
+.kforumSpoilerHeader > * {
+    max-width: 100%;
+    box-sizing: border-box;
+    flex: 0 1 auto;
+    min-width: 0;
 }
 
 /* Der Knopf wird vom Forum teils nach rechts gefloatet - hier bleibt
