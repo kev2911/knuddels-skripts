@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      3.06
+// @version      3.07
 // @description  Nutzt die hellen und dunklen Stile des Knuddels-Forums und ergaenzt sie: Umschalter oben rechts, Markierung ungelesener Themen und Beitraege, Rollen-Chips, Like ohne Zwischenseite, die gewohnten Antwort-Knoepfe und ein Einstellungsmenue.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -577,6 +577,63 @@ td.newsubjecttable > .kforumActionsTop {
 /* Keine feste Breite für die Autorenspalte: in einer Tabelle wirkt die
    wie ein Mindestmaß und macht die Spalte eher breiter. Sie wird von
    allein schmaler, wenn Avatar und Angaben kleiner werden. */
+
+/* --- Listen: Übersicht der Foren und Themenlisten -------------------
+   Hier entsteht die meiste Höhe. Jede Zeile stapelt mehrere Blöcke
+   übereinander - Titel, Beschreibung bzw. Autorenzeile, Zeitangaben -
+   und jede Zelle bringt großzügige Abstände mit. */
+/* Bewusst über den Namensteil "topic" statt über eine Aufzählung: die
+   Themenzeile hat sieben Zellen (Symbol, Betreff, Antworten, Gelesen,
+   Zeit ...), und die höchste gibt die Zeilenhöhe vor. Eine einzelne
+   vergessene Zelle macht die ganze Maßnahme wirkungslos. */
+.${SLIM_CLASS} td[class*="topic"],
+.${SLIM_CLASS} td[class*="lastpost"],
+.${SLIM_CLASS} td.newinforum,
+.${SLIM_CLASS} td.forumtitle,
+.${SLIM_CLASS} td.threadtotal,
+.${SLIM_CLASS} td.posttotal,
+.${SLIM_CLASS} td.posttime {
+    padding: 3px 9px !important;
+    line-height: 1.35 !important;
+}
+
+/* Der Titel steht in einer Überschrift, die eigene Abstände mitbringt */
+.${SLIM_CLASS} td[class*="topicsubject"] h1,
+.${SLIM_CLASS} td.forumtitle h1 {
+    margin: 0 !important;
+    font-size: inherit !important;
+    line-height: 1.35 !important;
+}
+
+.${SLIM_CLASS} td[class*="topicsubject"] > div,
+.${SLIM_CLASS} td.posttime > div { margin: 0 !important; }
+
+.${SLIM_CLASS} td[class*="topicsubject"] .small,
+.${SLIM_CLASS} td.forumtitle .small,
+.${SLIM_CLASS} td.posttime .small { line-height: 1.3 !important; }
+
+/* Symbole in den Listen geben die Zeilenhöhe nicht mehr vor */
+.${SLIM_CLASS} td[class*="topic"] img,
+.${SLIM_CLASS} td.newinforum img,
+.${SLIM_CLASS} td.posttime img { max-height: 14px !important; }
+
+.${SLIM_CLASS} td[class*="topic"] .vpad,
+.${SLIM_CLASS} td.newinforum .vpad {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+/* Die Forenbeschreibung in der Übersicht ist der größte Höhentreiber:
+   oft zwei bis vier Zeilen je Forum. Sie bleibt stehen, wird aber auf
+   eine Zeile gekürzt - der Titel darüber trägt ohnehin die Auskunft. */
+.${SLIM_CLASS} .forumdescript {
+    display: -webkit-box !important;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    overflow: hidden !important;
+    line-height: 1.35 !important;
+    margin: 0 !important;
+}
 }
 
 /* Zweite Stufe: Nebensachen beim Autor ausblenden. Nick, Titel, Rolle
