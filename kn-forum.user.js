@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      3.01
+// @version      3.02
 // @description  Nutzt die hellen und dunklen Stile des Knuddels-Forums und ergaenzt sie: Umschalter oben rechts, Markierung ungelesener Themen und Beitraege, Rollen-Chips, Like ohne Zwischenseite, die gewohnten Antwort-Knoepfe und ein Einstellungsmenue.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -531,8 +531,34 @@ td.newsubjecttable > .kforumActionsTop {
     padding-left: 0 !important;
     border: 1px solid rgba(128, 128, 128, 0.45);
     border-radius: 4px;
-    overflow: hidden;
+    background: rgba(128, 128, 128, 0.05);
 }
+
+/* Nichts am Spoiler darf den Text beschneiden. Das Forum deckelt den
+   Inhalt an mehreren Stellen (Höhe, Zeilenzahl, Umbruch); hier wird
+   jede dieser Bremsen für den Kasten und alles darin gelöst, damit
+   auch lange Gesprächsverläufe vollständig aufklappen. */
+.kforumSpoiler,
+.kforumSpoiler * {
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    -webkit-line-clamp: none !important;
+}
+
+.kforumSpoiler,
+.kforumSpoilerBody,
+.kforumSpoilerBody * {
+    white-space: normal !important;
+    word-break: break-word;
+}
+
+/* Die Höhe darf nur dort frei werden, wo kein Inhalt versteckt ist -
+   sonst klappt der Spoiler von allein auf */
+.kforumSpoilerHeader,
+.kforumSpoiler > .ubbcode-body,
+.kforumSpoilerBody { height: auto !important; }
 
 .kforumSpoilerHeader {
     display: flex;
@@ -543,12 +569,14 @@ td.newsubjecttable > .kforumActionsTop {
     font-weight: bold;
     background: rgba(128, 128, 128, 0.14);
     border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 3px 3px 0 0;
 }
 
-/* Der Knopf wird vom Forum nach rechts gefloatet - hier bleibt er
-   direkt neben der Kennzeichnung stehen */
-.kforumSpoilerHeader input.post-buttons,
-.kforumSpoilerHeader .post-buttons {
+/* Der Knopf wird vom Forum teils nach rechts gefloatet - hier bleibt
+   er direkt neben der Kennzeichnung stehen */
+.kforumSpoilerHeader input,
+.kforumSpoilerHeader .post-buttons,
+.kforumSpoilerHeader .form-button {
     float: none !important;
     margin: 0 !important;
 }
@@ -564,17 +592,19 @@ td.newsubjecttable > .kforumActionsTop {
     border: 1px solid rgba(254, 154, 46, 0.42);
 }
 
+/* Der Innenabstand gehört an die versteckte Lage, nicht an ihre Hülle -
+   sonst steht beim zugeklappten Spoiler ein leerer Streifen */
 .kforumSpoilerBody { padding: 0 10px; }
 .kforumSpoilerBody > div { padding: 9px 0; }
 
 .${ROOT_CLASS} .kforumSpoiler {
-    background: #111111;
-    border-color: #3a3a3a;
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.22);
 }
 
 .${ROOT_CLASS} .kforumSpoilerHeader {
-    background: #1b1b1b;
-    border-bottom-color: #3a3a3a;
+    background: rgba(255, 255, 255, 0.07);
+    border-bottom-color: rgba(255, 255, 255, 0.20);
 }
 
 .${ROOT_CLASS} .kforumSpoilerTag {
@@ -1248,12 +1278,58 @@ a.kforumBusy { opacity: 0.6; }
 
     /* ------------------------------------------------------------------
      *  Spoiler
-     *  Das Forum liefert den Kopf mit der Klasse "ubbcode-headerZZ", zu
-     *  der es kein Stylesheet gibt - der Kasten fehlt also. Hier bekommt
-     *  der Spoiler denselben Aufbau wie ein Zitat: Kopfzeile mit
-     *  Kennzeichnung und Knopf, darunter der Text.
+     *  Der Spoiler bekommt denselben Aufbau wie ein Zitat: Kopfzeile mit
+     *  Kennzeichnung und Knopf, darunter der Text. Wichtig ist dabei,
+     *  dass nichts den Inhalt deckelt - lange Gesprächsverläufe wurden
+     *  sonst nach ein paar Zeilen abgeschnitten.
+     *
+     *  Erkannt wird der Spoiler am Knopf mit toggle_spoiler. Das ist der
+     *  einzige sichere Anker: Zitate und Code-Kästen tragen dieselbe
+     *  Klasse "ubbcode-block" und dürfen nicht mitgefasst werden.
      * ----------------------------------------------------------------*/
     function enhanceSpoilers() {
+        document.querySelectorAll('.post_inner [onclick*="toggle_spoiler"]').forEach(function (button) {
+            var header = button.closest('[class*="ubbcode-header"]') || button.parentElement;
+
+            if (!header || header.classList.contains('kforumSpoilerHeader'))
+                return;
+
+            // Das Forum liefert zwei Formen nebeneinander: ältere Beiträge
+            // haben "ubbcode-headerZZ" in einem schmucklosen div, neuere das
+            // reparierte "ubbcode-block". Beide umschließen Kopf und Text,
+            // also taugt in beiden Fällen das Elternelement als Kasten.
+            var box = header.parentElement;
+
+            if (box && box.classList.contains('post_inner'))
+                box = null;
+
+            if (box)
+                box.classList.add('kforumSpoiler');
+
+            header.classList.add('kforumSpoilerHeader');
+
+            // Der Knopf gehört direkt hinter die Kennzeichnung, nicht
+            // ans Ende der Zeile
+            if (button.parentElement === header)
+                header.appendChild(button);
+
+            // Der Text selbst: die Hülle bekommt den Innenabstand, die
+            // versteckte Lage darin bleibt unangetastet - sonst klappt
+            // der Spoiler von allein auf
+            var body = box ? box.querySelector('[class*="ubbcode-body"], div.spoiler') : null;
+
+            if (!body) {
+                body = header.nextElementSibling;
+
+                if (body && body.querySelector('[class*="ubbcode-header"]'))
+                    body = null;
+            }
+
+            if (body)
+                body.classList.add('kforumSpoilerBody');
+        });
+
+        // Ältere Darstellung, bei der der Text in einem div.spoiler steht
         document.querySelectorAll('.post_inner div.spoiler').forEach(function (body) {
             if (body.classList.contains('kforumSpoilerBody'))
                 return;
