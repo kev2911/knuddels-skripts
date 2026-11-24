@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      3.03
+// @version      3.05
 // @description  Nutzt die hellen und dunklen Stile des Knuddels-Forums und ergaenzt sie: Umschalter oben rechts, Markierung ungelesener Themen und Beitraege, Rollen-Chips, Like ohne Zwischenseite, die gewohnten Antwort-Knoepfe und ein Einstellungsmenue.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -525,14 +525,43 @@ td.newsubjecttable > .kforumActionsTop {
     border-top: 1px solid rgba(128, 128, 128, 0.28);
 }
 
+/* --- Pfad: wo bin ich, wohin kann ich zurück ----------------------- */
+/* Die Stationen hinter mir sind anklickbar und deshalb unterstrichen,
+   die aktuelle Seite ist es nicht - sie steht ruhiger da. */
+.kforumCrumbs a {
+    text-decoration: underline !important;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+
+.kforumCrumbs a:hover {
+    text-decoration-thickness: 2px;
+    text-underline-offset: 2px;
+}
+
+/* Die aktuelle Seite: kein Verweis-Strich, etwas zurückgenommen - auch
+   dann, wenn das Forum sie auf sich selbst verlinkt */
+td.breadcrumbs .kforumHere,
+td.breadcrumbs .kforumHere a {
+    text-decoration: none !important;
+    opacity: 0.72;
+    cursor: default;
+}
+
+/* Die Trenner zwischen den Stationen etwas zurücknehmen */
+.kforumCrumbs > i { opacity: 0.45; }
+
 /* --- Spoiler wieder als Kasten, wie das Zitat ---------------------- */
+/* Bewusst ohne "overflow: hidden": das würde zwar die Ecken sauber
+   schneiden, aber eben auch den Knopf, sobald er etwas mehr Platz
+   braucht. Stattdessen bekommt die Kopfzeile so viel Luft, dass nichts
+   an den Rand stößt, und die Ecken werden einzeln gerundet. */
 .kforumSpoiler {
-    margin: 10px 0;
+    margin: 14px 0;
     padding-left: 0 !important;
     border: 1px solid rgba(128, 128, 128, 0.45);
-    border-radius: 4px;
+    border-radius: 8px;
     background: rgba(128, 128, 128, 0.05);
-    overflow: hidden;
 }
 
 /* Nichts am Textbereich darf den Inhalt beschneiden. Das Forum deckelt
@@ -560,14 +589,16 @@ td.newsubjecttable > .kforumActionsTop {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 4px 9px;
+    gap: 8px 12px;
     box-sizing: border-box;
     width: 100%;
-    padding: 6px 10px;
+    padding: 11px 16px;
+    font-size: 14px;
     font-weight: bold;
+    line-height: 1.5;
     background: rgba(128, 128, 128, 0.14);
     border-bottom: 1px solid rgba(128, 128, 128, 0.35);
-    border-radius: 3px 3px 0 0;
+    border-radius: 7px 7px 0 0;
 }
 
 /* Die Kopfzeile wächst um den Knopf herum, statt ihn überstehen zu
@@ -579,20 +610,31 @@ td.newsubjecttable > .kforumActionsTop {
     min-width: 0;
 }
 
-/* Der Knopf wird vom Forum teils nach rechts gefloatet - hier bleibt
-   er direkt neben der Kennzeichnung stehen */
+/* Der Knopf kommt vom Forum mit Float, eigenen Abständen und teils
+   fester Höhe. Hier wird all das zurückgesetzt, damit er als normales
+   Element in der Zeile steht und seine Größe allein aus seinem Inhalt
+   bezieht - dann kann er weder überstehen noch beschnitten werden. */
 .kforumSpoilerHeader input,
 .kforumSpoilerHeader .post-buttons,
 .kforumSpoilerHeader .form-button {
     float: none !important;
+    position: static !important;
     margin: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    padding: 7px 16px !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    vertical-align: middle !important;
+    flex: 0 0 auto;
 }
 
 .kforumSpoilerTag {
-    padding: 0 7px;
-    font-size: 10px;
+    padding: 2px 10px;
+    font-size: 11px;
     font-weight: bold;
-    line-height: 1.7;
+    line-height: 1.6;
     border-radius: 999px;
     color: #7a4b00;
     background: rgba(254, 154, 46, 0.18);
@@ -601,8 +643,8 @@ td.newsubjecttable > .kforumActionsTop {
 
 /* Der Innenabstand gehört an die versteckte Lage, nicht an ihre Hülle -
    sonst steht beim zugeklappten Spoiler ein leerer Streifen */
-.kforumSpoilerBody { padding: 0 10px; }
-.kforumSpoilerBody > div { padding: 9px 0; }
+.kforumSpoilerBody { padding: 0 16px; border-radius: 0 0 7px 7px; }
+.kforumSpoilerBody > div { padding: 14px 0; }
 
 .${ROOT_CLASS} .kforumSpoiler {
     background: rgba(255, 255, 255, 0.04);
@@ -2008,6 +2050,66 @@ a.kforumBusy { opacity: 0.6; }
      *  die Fußzeile. Aufbau mit den Forumsklassen, damit er in Light und
      *  Dark genauso aussieht wie das Original.
      * ----------------------------------------------------------------*/
+    /* ------------------------------------------------------------------
+     *  Pfad lesbar machen
+     *  Seit dem Update sehen alle Stationen gleich aus - man erkennt nicht
+     *  mehr, wo man steht und wohin man zurückspringen kann. Das Forum
+     *  gibt die aktuelle Seite als verschachtelte Überschrift ohne Link
+     *  aus; daran lässt sie sich sicher festmachen.
+     * ----------------------------------------------------------------*/
+    function styleCrumbs() {
+        document.querySelectorAll('td.breadcrumbs').forEach(function (cell) {
+            if (cell.getAttribute('data-kforum-crumbs'))
+                return;
+
+            // Das Forum schreibt die aktuelle Seite als Überschrift in die
+            // Überschrift des Pfades. Der Browser verschachtelt zwei <h1>
+            // aber nicht, sondern macht Geschwister daraus: die erste trägt
+            // den Pfad, die letzte die aktuelle Seite. Auf der Themenliste
+            // verweist die aktuelle Seite auf sich selbst, deshalb taugt
+            // "ohne Verweis" nicht als Merkmal - die Position schon.
+            var heads = cell.querySelectorAll('h1');
+
+            if (!heads.length)
+                return;
+
+            cell.setAttribute('data-kforum-crumbs', '1');
+
+            heads.forEach(function (head) {
+                head.classList.add('kforumCrumbs');
+            });
+
+            if (heads.length > 1) {
+                heads[heads.length - 1].classList.add('kforumHere');
+                return;
+            }
+
+            // Nur eine Überschrift: steht kein Verweis darin, ist sie selbst
+            // die aktuelle Seite
+            if (!heads[0].querySelector('a')) {
+                heads[0].classList.add('kforumHere');
+                return;
+            }
+
+            // Rückfalllinie: steht die aktuelle Seite nur als loser Text am
+            // Ende, bekommt sie eine eigene Hülle, um sie auszeichnen zu können
+            var last = heads[heads.length - 1];
+            var node = last.lastChild;
+
+            while (node && node.nodeType === 3 && !(node.nodeValue || '').trim())
+                node = node.previousSibling;
+
+            if (!node || node.nodeType !== 3)
+                return;
+
+            var box = document.createElement('span');
+
+            box.className = 'kforumHere';
+            box.textContent = node.nodeValue;
+            node.parentNode.replaceChild(box, node);
+        });
+    }
+
     function addBottomCrumbs() {
         if (document.getElementById('kforumCrumbs'))
             return;
@@ -2048,6 +2150,10 @@ a.kforumBusy { opacity: 0.6; }
         // deshalb werden alle eingesammelt statt nur die erste.
         copy.querySelectorAll('h1, h2, h3').forEach(function (heading) {
             var span = document.createElement('span');
+
+            // Die Auszeichnung des Pfades (Stationen / aktuelle Seite) ist
+            // schon gesetzt und soll die Umwandlung überleben
+            span.className = heading.className;
 
             while (heading.firstChild)
                 span.appendChild(heading.firstChild);
@@ -2420,25 +2526,58 @@ a.kforumBusy { opacity: 0.6; }
         return null;
     }
 
+    // Der Name des eingebundenen Stylesheets ist die verlässlichste Quelle:
+    // Das Forum nennt seine Stile "Knuddels Purple Dunkel" bzw. "Hell", und
+    // der Name ändert sich während des Seitenlebens nicht. Dieselbe Quelle
+    // liefert vor und nach dem Laden dasselbe Ergebnis.
+    function sheetTheme() {
+        var found = null;
+
+        document.querySelectorAll('link[rel="stylesheet"]').forEach(function (link) {
+            var name = link.getAttribute('href') || '';
+
+            if (!/\/styles\//.test(name))
+                return;
+
+            if (/dunkel|dark|night/i.test(name))
+                found = 'dark';
+            else if (/hell|light|tag/i.test(name))
+                found = 'light';
+        });
+
+        return found;
+    }
+
+    // Gibt 'dark', 'light' oder null zurück. null heißt: noch nicht
+    // feststellbar - dann wird bewusst nichts gesetzt, statt zu raten.
     function detectTheme() {
+        var name = sheetTheme();
+
+        if (name)
+            return name;
+
         var color = pageBackground();
 
         if (color)
             return luminance(color) < 0.4 ? 'dark' : 'light';
 
-        // Rückfalllinie, solange noch nichts gerendert ist: der Name des
-        // Stylesheets, das das Forum einbindet
-        var sheet = document.querySelector('link[href*="/styles/Knuddels_"]');
-        var name = sheet ? sheet.getAttribute('href') : '';
-
-        return /dunkel|dark|night/i.test(name) ? 'dark' : 'light';
+        return null;
     }
 
     function applyTheme() {
         if (!document.documentElement)
             return;
 
-        theme = detectTheme();
+        var found = detectTheme();
+
+        // Beim Seitenstart sind die <link>-Elemente oft noch nicht gelesen
+        // und es gibt noch keinen Hintergrund zum Messen. Früher wurde dann
+        // "hell" angenommen und nach dem Laden auf "dunkel" korrigiert - das
+        // war das Umspringen. Jetzt bleibt es unbestimmt, bis es feststeht.
+        if (!found)
+            return;
+
+        theme = found;
 
         var root = document.documentElement.classList;
 
@@ -2620,6 +2759,10 @@ a.kforumBusy { opacity: 0.6; }
         reorderStyle();
         addButton();
 
+        // Erst den Pfad auszeichnen, dann kopieren - so trägt die Kopie
+        // am Seitenende dieselbe Auszeichnung
+        each([styleCrumbs]);
+
         if (settings.bottomCrumbs)
             addBottomCrumbs();
 
@@ -2627,8 +2770,8 @@ a.kforumBusy { opacity: 0.6; }
 
         // Anpassungen an das Forums-Update - jede für sich abgesichert,
         // damit ein geänderter Seitenaufbau nicht alles Weitere stoppt
-        each([styleGroupTags, tweakNavigation, enhanceLikes, enhanceReplyButtons,
-              enhanceSpoilers, collapsePostIcons]);
+        each([styleGroupTags, tweakNavigation, enhanceLikes,
+              enhanceReplyButtons, enhanceSpoilers, collapsePostIcons]);
 
         markUnreadRows();
         markNewPosts();
