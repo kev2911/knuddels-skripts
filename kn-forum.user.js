@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      3.05
+// @version      3.06
 // @description  Nutzt die hellen und dunklen Stile des Knuddels-Forums und ergaenzt sie: Umschalter oben rechts, Markierung ungelesener Themen und Beitraege, Rollen-Chips, Like ohne Zwischenseite, die gewohnten Antwort-Knoepfe und ein Einstellungsmenue.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -172,6 +172,8 @@
     // Welcher Stil des Forums gerade läuft - gemessen, nicht geraten
     var ROOT_CLASS   = 'kforumDark';     // Klasse am <html>, wenn dunkel
     var LIGHT_CLASS  = 'kforumLight';    // Klasse am <html>, wenn hell
+    var SLIM_CLASS   = 'kforumSlim';     // Klasse am <html> für die schlanke Ansicht
+    var SLIMA_CLASS  = 'kforumSlimAuthor'; // dto., zusätzlich ohne Nebensachen beim Autor
     var UNREAD_CLASS = 'kforumUnread';   // Marker für Zeilen mit ungelesenen Beiträgen
     var POST_CLASS   = 'kforumPostLight';// Marker für Beitragsflächen mit eigenem hellen Grund
     var NEWPOST_CLASS = 'kforumNewPost'; // Kopfzeile eines ungelesenen Beitrags
@@ -524,6 +526,65 @@ td.newsubjecttable > .kforumActionsTop {
     padding-top: 5px;
     border-top: 1px solid rgba(128, 128, 128, 0.28);
 }
+
+/* --- Schlanke Ansicht ---------------------------------------------- */
+/* Nur auf breiten Fenstern: Auf dem Telefon gibt es keine Breite zu
+   bändigen, und engere Innenabstände würden die Textspalte dort nur
+   zusätzlich verschmälern - die Seite würde länger statt kürzer. */
+@media (min-width: 900px) {
+/* Das Forum spannt den Inhalt über 95% der Fensterbreite. Auf einem
+   breiten Monitor wird dadurch jede Zeile sehr lang. Hier wird die
+   Breite gedeckelt und die Darstellung insgesamt dichter gesetzt. */
+.${SLIM_CLASS} table.center.forum-content { max-width: 1240px !important; }
+
+.${SLIM_CLASS} td.subjecttable,
+.${SLIM_CLASS} td.newsubjecttable { padding: 4px 9px !important; }
+
+.${SLIM_CLASS} td.post-content,
+.${SLIM_CLASS} td.author-content { padding: 7px 10px !important; }
+
+.${SLIM_CLASS} td.post-options { padding: 3px 9px !important; }
+
+.${SLIM_CLASS} .post_inner { line-height: 1.45; }
+
+.${SLIM_CLASS} table.t_outer { margin-bottom: 7px !important; }
+
+/* Avatare kleiner. Das Forum setzt die Maße direkt am Element, deshalb
+   braucht es hier !important. */
+.${SLIM_CLASS} .author-picture,
+.${SLIM_CLASS} .author-picture > div,
+.${SLIM_CLASS} .author-picture img.avatar {
+    max-width: 56px !important;
+    max-height: 56px !important;
+}
+
+/* Fehlt ein Bild, zeigt das Forum den Anfangsbuchstaben in Avatargröße.
+   Das ist ein <a> und damit inline - ohne inline-block greift keine
+   Breite daran. */
+.${SLIM_CLASS} .author-picture .avatar-none {
+    display: inline-block !important;
+    width: 56px !important;
+    height: 56px !important;
+    font-size: 40px !important;
+    line-height: 56px !important;
+}
+
+.${SLIM_CLASS} .author-picture .avatar-none span {
+    min-width: 0 !important;
+    min-height: 0 !important;
+}
+
+/* Keine feste Breite für die Autorenspalte: in einer Tabelle wirkt die
+   wie ein Mindestmaß und macht die Spalte eher breiter. Sie wird von
+   allein schmaler, wenn Avatar und Angaben kleiner werden. */
+}
+
+/* Zweite Stufe: Nebensachen beim Autor ausblenden. Nick, Titel, Rolle
+   und Bild bleiben stehen. */
+.${SLIMA_CLASS} .author-registered,
+.${SLIMA_CLASS} .author-totalposts,
+.${SLIMA_CLASS} .author-likes,
+.${SLIMA_CLASS} .author-location { display: none !important; }
 
 /* --- Pfad: wo bin ich, wohin kann ich zurück ----------------------- */
 /* Die Stationen hinter mir sind anklickbar und deshalb unterstrichen,
@@ -2183,6 +2244,8 @@ a.kforumBusy { opacity: 0.6; }
         hideAdminLink: true,   // Forums-Administration ausblenden
         actionsTop:    false,  // Antwort/Zitat oben statt unter dem Beitrag
         openAll:       false,  // Knopf "alle ungelesenen Themen öffnen"
+        slim:          false,  // schlanke Ansicht: schmaler und dichter
+        slimAuthor:    false,  // Nebensachen in der Autorenspalte ausblenden
         hiddenBoards:  []
     };
     var boards = [];
@@ -2202,6 +2265,12 @@ a.kforumBusy { opacity: 0.6; }
 
             if (typeof stored.openAll === 'boolean')
                 settings.openAll = stored.openAll;
+
+            if (typeof stored.slim === 'boolean')
+                settings.slim = stored.slim;
+
+            if (typeof stored.slimAuthor === 'boolean')
+                settings.slimAuthor = stored.slimAuthor;
 
             if (Array.isArray(stored.hiddenBoards))
                 settings.hiddenBoards = stored.hiddenBoards;
@@ -2406,6 +2475,14 @@ a.kforumBusy { opacity: 0.6; }
           + '    <span>Forums-Administration ausblenden</span></label>'
           + '    <label class="kforumOption"><input type="checkbox" id="kforumOptTop">'
           + '    <span>Antwort und Zitat oben am Beitrag</span></label>'
+          + '    <label class="kforumOption"><input type="checkbox" id="kforumOptSlim">'
+          + '    <span>Schlanke Ansicht</span></label>'
+          + '    <div class="kforumHint">Deckelt die Breite, setzt Beiträge dichter '
+          + '    und verkleinert die Avatare.</div>'
+          + '    <label class="kforumOption"><input type="checkbox" id="kforumOptSlimAuthor">'
+          + '    <span>&nbsp;&nbsp;↳ dabei Angaben zum Autor ausblenden</span></label>'
+          + '    <div class="kforumHint">Blendet Registrierdatum, Beitragszahl, Likes '
+          + '    und Ort aus. Nick, Titel, Rolle und Bild bleiben.</div>'
           + '    <label class="kforumOption"><input type="checkbox" id="kforumOptOpenAll">'
           + '    <span>Button: alle ungelesenen Themen öffnen</span></label>'
           + '    <div class="kforumHint">Der Button steht über der Liste und öffnet '
@@ -2429,11 +2506,29 @@ a.kforumBusy { opacity: 0.6; }
         var adminBox = panel.querySelector('#kforumOptAdmin');
         var topBox = panel.querySelector('#kforumOptTop');
         var openBox = panel.querySelector('#kforumOptOpenAll');
+        var slimBox = panel.querySelector('#kforumOptSlim');
+        var slimAuthorBox = panel.querySelector('#kforumOptSlimAuthor');
 
         crumbBox.checked = settings.bottomCrumbs;
         adminBox.checked = settings.hideAdminLink;
         topBox.checked = settings.actionsTop;
         openBox.checked = settings.openAll;
+        slimBox.checked = settings.slim;
+        slimAuthorBox.checked = settings.slimAuthor;
+        slimAuthorBox.disabled = !settings.slim;
+
+        slimBox.addEventListener('change', function () {
+            settings.slim = slimBox.checked;
+            saveSettings();
+            slimAuthorBox.disabled = !settings.slim;
+            applySlim();
+        });
+
+        slimAuthorBox.addEventListener('change', function () {
+            settings.slimAuthor = slimAuthorBox.checked;
+            saveSettings();
+            applySlim();
+        });
 
         // Position der Aktionen: beim Umschalten die Seite neu aufbauen zu
         // lassen wäre aufwendig - ein Hinweis reicht, der Rest kommt beim
@@ -2593,6 +2688,18 @@ a.kforumBusy { opacity: 0.6; }
      *  dort den jeweils anderen und löst dasselbe Ereignis aus wie eine
      *  Auswahl von Hand - das Forum merkt sich die Wahl am Konto.
      * ----------------------------------------------------------------*/
+    // Schlanke Ansicht an- und abschalten. Beides hängt an einer Klasse am
+    // <html>, damit der Schalter sofort wirkt, ohne die Seite neu zu laden.
+    function applySlim() {
+        if (!document.documentElement)
+            return;
+
+        var root = document.documentElement.classList;
+
+        root.toggle(SLIM_CLASS, !!settings.slim);
+        root.toggle(SLIMA_CLASS, !!(settings.slim && settings.slimAuthor));
+    }
+
     function styleSelect() {
         return document.querySelector('select[name="style"]');
     }
@@ -2752,6 +2859,7 @@ a.kforumBusy { opacity: 0.6; }
         applyTheme();
 
         loadSettings();
+        applySlim();
         harvestBoards();
 
         addStyle('kforumToggleStyle', toggleCss());
