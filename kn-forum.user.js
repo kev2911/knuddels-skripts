@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      3.08
+// @version      3.10
 // @description  Nutzt die hellen und dunklen Stile des Knuddels-Forums und ergaenzt sie: Umschalter oben rechts, Markierung ungelesener Themen und Beitraege, Rollen-Chips, Like ohne Zwischenseite, die gewohnten Antwort-Knoepfe und ein Einstellungsmenue.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -1847,8 +1847,18 @@ a.kforumBusy { opacity: 0.6; }
 
             link.setAttribute('data-kforum-like', '1');
 
+            // Seit dem Update hängt das Forum selbst einen Aufruf an den
+            // Verweis, der ein verstecktes Formular abschickt. Das lädt die
+            // ganze Seite neu. Der Aufruf wird entfernt, damit die Anzeige
+            // wie bisher an Ort und Stelle aktualisiert wird.
+            if (link.getAttribute('onclick')) {
+                link.removeAttribute('onclick');
+                link.onclick = null;
+            }
+
             link.addEventListener('click', function (event) {
                 event.preventDefault();
+                event.stopPropagation();
                 runLike(link);
             });
         });
@@ -1856,9 +1866,19 @@ a.kforumBusy { opacity: 0.6; }
 
     /* ------------------------------------------------------------------
      *  Antworten wie vor dem Update
-     *  Das Forum bietet nur noch die Sofort-Varianten an. Hier bekommen
-     *  sie ihre alten Namen zurück und daneben kommen die Knöpfe für den
-     *  Volltexteditor.
+     *
+     *  Grundsatz: Es wird nur geordnet und benannt, was das Forum selbst
+     *  anbietet. Nichts wird erfunden.
+     *    - Sofort-Antwort und Sofort-Zitat bekommen ihre alten Namen
+     *      zurück, wenn das Forum sie liefert. Liefert es sie nicht,
+     *      fehlen sie - sie würden ohne das zugehörige Formular am
+     *      Seitenende ohnehin ins Leere führen.
+     *    - Ändern wird nie erzeugt. Es erscheint genau dann, wenn das
+     *      Forum den Verweis mitschickt, also wenn die Rechte da sind.
+     *    - Antwort und Zitat für den Volltexteditor werden ergänzt, aber
+     *      nur dort, wo überhaupt geantwortet werden darf.
+     *  Kommen die Sofort-Varianten später zurück, sind sie ohne weitere
+     *  Änderung wieder dabei.
      * ----------------------------------------------------------------*/
     function renameButton(link, label) {
         var done = false;
@@ -1959,6 +1979,24 @@ a.kforumBusy { opacity: 0.6; }
             row.style.display = 'none';
     }
 
+    // Beitragsnummer aus der Aktionszeile ermitteln - aus dem Like-Verweis,
+    // einem Antwort-Verweis oder der Kennung der Beitragszeile
+    function postNumber(cell) {
+        var link = cell.querySelector('a[href*="target="], a[href*="Number="]');
+        var href = link ? link.getAttribute('href') || '' : '';
+        var found = /[?&](?:target|Number)=(\d+)/.exec(href);
+
+        if (found)
+            return found[1];
+
+        var row = cell.closest('table');
+        var head = row ? row.querySelector('tr[id^="Post"]') : null;
+
+        found = head ? /^Post(\d+)$/.exec(head.id) : null;
+
+        return found ? found[1] : null;
+    }
+
     function enhanceReplyButtons() {
         document.querySelectorAll('td.post-options').forEach(function (cell) {
             if (cell.getAttribute('data-kforum-reply'))
@@ -1980,12 +2018,17 @@ a.kforumBusy { opacity: 0.6; }
                     quickReply = { link: link, id: args[1] };
             });
 
-            if (!quickReply && !quickQuote)
+            // Die Beitragsnummer steht nicht nur im Sofort-Knopf: Das Forum
+            // liefert die Sofort-Varianten nicht auf jeder Seite aus. Dann
+            // taugt der Like-Verweis, der Antwort-Verweis oder die Kennung
+            // der Beitragszeile als Quelle.
+            var id = (quickReply || quickQuote || {}).id || postNumber(cell);
+
+            if (!id)
                 return;
 
             cell.setAttribute('data-kforum-reply', '1');
 
-            var id = (quickReply || quickQuote).id;
             var host = cell.querySelector('.fr') || cell;
 
             if (quickQuote)
@@ -1994,8 +2037,31 @@ a.kforumBusy { opacity: 0.6; }
             if (quickReply)
                 renameButton(quickReply.link, 'Sofort-Antwort');
 
-            host.appendChild(fullButton('Zitat', '/ubbthreads.php?ubb=newreply&Number=' + id + '&q=1'));
-            host.appendChild(fullButton('Antwort', '/ubbthreads.php?ubb=newreply&Number=' + id));
+            // Nur ergänzen, was noch fehlt. Seit dem Update liefert das
+            // Forum Antwort und Zitat teils schon als Volltext-Verweise.
+            var vorhanden = {};
+
+            Array.prototype.slice.call(host.children).forEach(function (child) {
+                var kind = buttonKind(child);
+
+                if (kind)
+                    vorhanden[kind] = true;
+            });
+
+            // Antwort und Zitat nur dort ergänzen, wo das Forum überhaupt
+            // einen Weg zum Antworten anbietet. Fehlt jeder - etwa in einem
+            // geschlossenen oder nur lesbaren Bereich -, bleibt die Leiste
+            // wie sie ist, statt ins Leere führende Knöpfe zu zeigen.
+            var antwortMoeglich = quickReply || quickQuote
+                               || vorhanden.antwort || vorhanden.zitat;
+
+            if (antwortMoeglich) {
+                if (!vorhanden.zitat)
+                    host.appendChild(fullButton('Zitat', '/ubbthreads.php?ubb=newreply&Number=' + id + '&q=1'));
+
+                if (!vorhanden.antwort)
+                    host.appendChild(fullButton('Antwort', '/ubbthreads.php?ubb=newreply&Number=' + id));
+            }
 
             sortButtons(host);
 
