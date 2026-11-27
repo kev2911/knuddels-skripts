@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-fotoadmin
 // @namespace    https://photo.knuddels.de/
-// @version      1.23
+// @version      1.24
 // @description  Fotoadministration-Helfer für Knuddels.de (KI-Check, neues Layout, Nick kopieren, Melden im Hintergrund)
 // @author       Kev
 // @match        https://photo.knuddels.de/photos-admin*
@@ -1611,6 +1611,32 @@ const chrome = {
             return built;
         }
 
+        // Untertitel einer Foto-Zelle einsammeln: direkte Textknoten PLUS schlichte
+        // Style-Spans (Massen-Fotokontrolle wrappt den Text in <span style="font-size:14px">,
+        // nur das Datum dahinter ist ein Textknoten). Formular-/Info-Texte werden gefiltert.
+        static cellSubtitle($cell) {
+            const parts = [];
+            $cell.contents().each(function () {
+                let t = '';
+                if (this.nodeType === 3) {
+                    t = this.nodeValue || '';
+                } else if (this.nodeType === 1 && this.tagName === 'SPAN'
+                    && !this.id && !(this.className || '').trim()
+                    && !$(this).find('input, select, textarea, img, a').length) {
+                    t = $(this).text() || '';                          // z. B. der 14px-Untertitel-Span
+                } else {
+                    return;
+                }
+                t = t.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+                if (!t) return;
+                if (/^Foto in Ordnung$/i.test(t)) return;              // Formular-Beschriftung
+                if (/Byte\)?\s*$/i.test(t)) return;                    // Dateigrößen-Angabe
+                if (/vorherige Kontrolle|Ablehnungen innerhalb/i.test(t)) return;  // Verify-Infos
+                parts.push(t);
+            });
+            return parts.join(' ').trim();
+        }
+
         static buildLineRow($li, page) {
             const $mainCell = $li.find('.photo_cell.new_photo').first();
             const $mainImg = $mainCell.find('.userimage').first();
@@ -1661,28 +1687,47 @@ const chrome = {
                         .attr('href', $albLink.attr('href'))
                         .text(($albLink.text() || '').trim())));
             }
-            // Untertitel des Fotos/Albums (falls vorhanden) – bei der Kontrolle wichtig.
-            // Alben: eigenes Element .album_photo_title. Fotoadministration/-kontrolle:
-            // freier Textknoten in der new_photo-Zelle (nach dem Bild, vor dem Formular).
+            // Untertitel der Fotos (falls vorhanden) – bei der Kontrolle wichtig.
+            // Quellen, in dieser Reihenfolge:
+            //  1) .album_photo_title im eigenen li (Alben-Massenkontrolle),
+            //  2) freie Textknoten der Hauptbild-Zelle (Fotoadministration/-kontrolle),
+            //  3) Album-Einzelseite: Untertitel des GEWÄHLTEN Bildes steht nativ NUR im
+            //     Raster unten -> über die Foto-ID aus dem Raster übernehmen.
+            // Zusätzlich wird die old_photo-Zelle (z. B. Profilfoto daneben) gescannt,
+            // damit wirklich JEDER vorhandene Untertitel sichtbar bleibt.
             const $rowTitle = $li.find('.album_photo_title').first();
             let rowTitleText = $rowTitle.length ? ($rowTitle.text() || '').replace(/\s+/g, ' ').trim() : '';
             if (!rowTitleText && page !== 'verify' && $mainCell.length) {
-                const parts = [];
-                $mainCell.contents().each(function () {
-                    if (this.nodeType !== 3) return;                       // nur direkte Textknoten
-                    const t = (this.nodeValue || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-                    if (!t) return;
-                    if (/^Foto in Ordnung$/i.test(t)) return;              // Formular-Beschriftung
-                    if (/Byte\)?\s*$/i.test(t)) return;                    // Dateigrößen-Angabe
-                    if (/vorherige Kontrolle|Ablehnungen innerhalb/i.test(t)) return;  // Verify-Infos
-                    parts.push(t);
-                });
-                rowTitleText = parts.join(' ').trim();
+                rowTitleText = NewLayout.cellSubtitle($mainCell);
+            }
+            if (!rowTitleText && page === 'albumphoto') {
+                // Gewähltes Albumbild: Untertitel aus dem Raster (gleiche Foto-ID) holen
+                const pid = String($li.find('input[name="p0-id"], input[id$="p0-id"]').val() || '').trim();
+                if (pid) {
+                    $('li.album_image').each(function () {
+                        const $g = $(this);
+                        if (!$g.find('a[href*="id=' + pid + '"]').length) return;
+                        const t = ($g.find('.album_photo_title').text() || '').replace(/\s+/g, ' ').trim();
+                        if (t) { rowTitleText = t; return false; }
+                    });
+                }
             }
             if (rowTitleText) {
                 $row.append($('<div class="epa-acard-title"></div>')
                     .append($('<span class="epa-acard-title-lbl">Untertitel</span>'))
                     .append($('<span class="epa-acard-title-txt"></span>').text(rowTitleText)));
+            }
+            // Untertitel des Nebenbilds (old_photo-Zelle, z. B. Profilfoto auf der
+            // Album-Einzelseite) – als eigene, klar beschriftete Zeile.
+            if (page !== 'verify') {
+                const $oldCell = $li.find('.photo_cell.old_photo').first();
+                const oldTitle = $oldCell.length ? NewLayout.cellSubtitle($oldCell) : '';
+                if (oldTitle && oldTitle !== rowTitleText) {
+                    const oldLbl = (page === 'albumphoto') ? 'Untertitel Profilfoto' : 'Untertitel vorheriges Foto';
+                    $row.append($('<div class="epa-acard-title"></div>')
+                        .append($('<span class="epa-acard-title-lbl"></span>').text(oldLbl))
+                        .append($('<span class="epa-acard-title-txt"></span>').text(oldTitle)));
+                }
             }
             // Verify: vorherige Kontrolle (2. Instanz) + Ablehnungs-Verlauf
             if (page === 'verify') {
