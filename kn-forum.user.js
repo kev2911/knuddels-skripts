@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kn-forum
 // @namespace    https://forum.knuddels.de/
-// @version      3.10
+// @version      3.11
 // @description  Nutzt die hellen und dunklen Stile des Knuddels-Forums und ergaenzt sie: Umschalter oben rechts, Markierung ungelesener Themen und Beitraege, Rollen-Chips, Like ohne Zwischenseite, die gewohnten Antwort-Knoepfe und ein Einstellungsmenue.
 // @author       Kev
 // @match        https://forum.knuddels.de/*
@@ -2169,14 +2169,28 @@ a.kforumBusy { opacity: 0.6; }
         }
 
         var parent = el.parentElement;
-
-        // nur Elemente prüfen, die eine eigene Farbe mitbringen -
-        // geerbte Farben hat das Elternelement bereits geklärt
-        if (parent && getComputedStyle(parent).color === style.color)
-            return;
-
         var text = parseRgb(style.color);
         var background = effectiveBackground(el);
+
+        // Abkürzung: Steht das Element in derselben Farbe auf derselben
+        // Fläche wie sein Elternelement, hat dessen Prüfung den Fall schon
+        // erledigt.
+        //
+        // Früher reichte hier die gleiche Farbe als Grund zum Überspringen.
+        // Das ging schief, sobald das Forum die Schriftfarbe mit
+        // "!important" über den ganzen Beitrag legt: Dann bringt kein
+        // Element mehr eine eigene Farbe mit, jedes gleicht seinem
+        // Elternelement - und ein heller Kasten mitten im Beitrag blieb
+        // ungeprüft. Entscheidend ist die Fläche, auf der der Text steht.
+        if (parent && getComputedStyle(parent).color === style.color) {
+            var parentBackground = effectiveBackground(parent);
+
+            if (background && parentBackground
+                && background.r === parentBackground.r
+                && background.g === parentBackground.g
+                && background.b === parentBackground.b)
+                return;
+        }
 
         if (!text || !background || contrast(text, background) >= MIN_CONTRAST)
             return;
@@ -2831,9 +2845,50 @@ a.kforumBusy { opacity: 0.6; }
         return found;
     }
 
+    // Seit Ende November läuft die Umschaltung nicht mehr über zwei
+    // Stylesheets, sondern über eine Klasse am <html>: "kd-dunkel". Gesetzt
+    // wird sie von einem kleinen Skript im Seitenkopf, gespeichert in einem
+    // Cookie, ersatzweise nach der Systemeinstellung. Das ist die
+    // verlässlichste Quelle - sie steht sofort fest und ändert sich nur,
+    // wenn wirklich umgeschaltet wird.
+    var FORUM_DARK = 'kd-dunkel';
+    var FORUM_COOKIE = 'kd_farbmodus';
+
+    function classTheme() {
+        var root = document.documentElement;
+
+        if (!root)
+            return null;
+
+        if (root.classList.contains(FORUM_DARK))
+            return 'dark';
+
+        // Ohne die Klasse ist es nur dann sicher hell, wenn das Forum seine
+        // Umschaltung überhaupt mitbringt - sonst wüssten wir es nicht
+        return forumToggleAvailable() ? 'light' : null;
+    }
+
+    function forumToggleAvailable() {
+        if (document.getElementById(FORUM_COOKIE))
+            return true;
+
+        try {
+            var page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+            return typeof page.kdFarbmodusUmschalten === 'function';
+        } catch {
+            return false;
+        }
+    }
+
     // Gibt 'dark', 'light' oder null zurück. null heißt: noch nicht
     // feststellbar - dann wird bewusst nichts gesetzt, statt zu raten.
     function detectTheme() {
+        var klasse = classTheme();
+
+        if (klasse)
+            return klasse;
+
         var name = sheetTheme();
 
         if (name)
@@ -2911,7 +2966,44 @@ a.kforumBusy { opacity: 0.6; }
         return found;
     }
 
+    // Die neue Umschaltung des Forums bedienen. Bevorzugt über dessen
+    // eigene Funktion, damit das Cookie genauso gesetzt wird wie bei einem
+    // Klick auf den (im Seitenkopf ausgeblendeten) Schalter des Forums.
+    // Klappt das nicht - etwa weil die Erweiterung in einer eigenen
+    // Umgebung läuft -, wird Klasse und Cookie selbst gesetzt.
+    function switchForumTheme() {
+        var root = document.documentElement;
+
+        if (!root || !forumToggleAvailable())
+            return false;
+
+        try {
+            var page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+            if (typeof page.kdFarbmodusUmschalten === 'function') {
+                page.kdFarbmodusUmschalten();
+                return true;
+            }
+        }
+        catch { /* dann eben von Hand */ }
+
+        var dunkel = !root.classList.contains(FORUM_DARK);
+
+        root.classList.toggle(FORUM_DARK, dunkel);
+        document.cookie = FORUM_COOKIE + '=' + (dunkel ? 'dunkel' : 'hell')
+            + ';path=/;max-age=31536000;SameSite=Lax'
+            + (location.protocol === 'https:' ? ';Secure' : '');
+
+        return true;
+    }
+
     function switchTheme(button) {
+        // Erst der neue Weg des Forums, dann der alte über die Auswahlliste
+        if (switchForumTheme()) {
+            applyTheme();
+            return;
+        }
+
         var select = styleSelect();
         var choices = styleChoices();
         var target = theme === 'dark' ? choices.light : choices.dark;
